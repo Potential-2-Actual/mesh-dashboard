@@ -12,7 +12,11 @@ interface SessionData {
 }
 
 function getSecret(): string {
-	return env.SESSION_SECRET || 'dev-secret-change-me';
+	const secret = env.SESSION_SECRET;
+	if (!secret) {
+		throw new Error('SESSION_SECRET is required — set it in .env or environment variables');
+	}
+	return secret;
 }
 
 function sign(payload: string): string {

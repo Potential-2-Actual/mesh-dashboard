@@ -17,9 +17,12 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
 	cookies.delete('oauth_state', { path: '/' });
 	cookies.delete('oauth_verifier', { path: '/' });
 
+	if (!env.GOOGLE_OAUTH_CLIENT_ID || !env.GOOGLE_OAUTH_CLIENT_SECRET) {
+		throw error(500, 'OAuth not configured');
+	}
 	const google = new Google(
-		env.GOOGLE_OAUTH_CLIENT_ID || '',
-		env.GOOGLE_OAUTH_CLIENT_SECRET || '',
+		env.GOOGLE_OAUTH_CLIENT_ID,
+		env.GOOGLE_OAUTH_CLIENT_SECRET,
 		`${env.ORIGIN || 'http://localhost:3100'}/auth/callback`
 	);
 
