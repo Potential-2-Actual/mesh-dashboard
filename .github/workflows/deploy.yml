@@ -54,13 +54,15 @@ jobs:
             --tunnel-through-iap --quiet \
             --command='set -e
               cd /opt/mesh-dashboard
-              [ -d build ] && mv build build.bak || true
-              tar xzf /tmp/deploy.tar.gz
-              npm ci --omit=dev
-              rm -rf build.bak /tmp/deploy.tar.gz
-              sudo systemctl restart mesh-dashboard
-              sleep 3
-              sudo systemctl is-active mesh-dashboard && echo "✅ Deploy complete"'
+              sudo bash -c "
+                [ -d build ] && mv build build.bak || true
+                tar xzf /tmp/deploy.tar.gz
+                npm ci --omit=dev
+                rm -rf build.bak /tmp/deploy.tar.gz
+                systemctl restart mesh-dashboard
+                sleep 3
+                systemctl is-active mesh-dashboard && echo \"✅ Deploy complete\"
+              "'
 
       - name: Update OAuth credentials
         run: |
@@ -68,12 +70,18 @@ jobs:
             --zone=${{ env.VM_ZONE }} \
             --project=${{ secrets.GCP_PROJECT_ID }} \
             --tunnel-through-iap --quiet \
-            --command="cd /opt/mesh-dashboard && \
-              grep -q '^GOOGLE_OAUTH_CLIENT_ID=' .env 2>/dev/null && \
-                sed -i 's|^GOOGLE_OAUTH_CLIENT_ID=.*|GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|' .env || \
-                echo 'GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}' >> .env && \
-              grep -q '^GOOGLE_OAUTH_CLIENT_SECRET=' .env 2>/dev/null && \
-                sed -i 's|^GOOGLE_OAUTH_CLIENT_SECRET=.*|GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|' .env || \
-                echo 'GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}' >> .env && \
-              sudo systemctl restart mesh-dashboard && \
-              echo '✅ OAuth creds updated'"
+            --command="sudo bash -c '
+              cd /opt/mesh-dashboard
+              if grep -q \"^GOOGLE_CLIENT_ID=\" .env 2>/dev/null; then
+                sed -i \"s|^GOOGLE_CLIENT_ID=.*|GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|\" .env
+              else
+                echo \"GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}\" >> .env
+              fi
+              if grep -q \"^GOOGLE_CLIENT_SECRET=\" .env 2>/dev/null; then
+                sed -i \"s|^GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|\" .env
+              else
+                echo \"GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}\" >> .env
+              fi
+              systemctl restart mesh-dashboard
+              echo \"✅ OAuth creds updated\"
+            '"
