@@ -72,15 +72,15 @@ jobs:
             --tunnel-through-iap --quiet \
             --command="sudo bash -c '
               cd /opt/mesh-dashboard
-              if grep -q \"^GOOGLE_CLIENT_ID=\" .env 2>/dev/null; then
-                sed -i \"s|^GOOGLE_CLIENT_ID=.*|GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|\" .env
+              if grep -q \"^GOOGLE_OAUTH_CLIENT_ID=\" .env 2>/dev/null; then
+                sed -i \"s|^GOOGLE_OAUTH_CLIENT_ID=.*|GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|\" .env
               else
-                echo \"GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}\" >> .env
+                echo \"GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}\" >> .env
               fi
-              if grep -q \"^GOOGLE_CLIENT_SECRET=\" .env 2>/dev/null; then
-                sed -i \"s|^GOOGLE_CLIENT_SECRET=.*|GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|\" .env
+              if grep -q \"^GOOGLE_OAUTH_CLIENT_SECRET=\" .env 2>/dev/null; then
+                sed -i \"s|^GOOGLE_OAUTH_CLIENT_SECRET=.*|GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|\" .env
               else
-                echo \"GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}\" >> .env
+                echo \"GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}\" >> .env
               fi
               systemctl restart mesh-dashboard
               echo \"✅ OAuth creds updated\"
