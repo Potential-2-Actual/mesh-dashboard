@@ -1,4 +1,4 @@
-import { connect, type NatsConnection, type Subscription, credsAuthenticator } from 'nats.ws';
+import { connect, type NatsConnection, type Subscription, nkeyAuthenticator } from 'nats.ws';
 import { messages, presence, connectionStatus, systemEvents } from './stores.js';
 import type { MessageEnvelope, PresenceInfo } from './types.js';
 import { get } from 'svelte/store';
@@ -21,21 +21,11 @@ export async function connectNats(natsUrl: string, seed: string) {
 	connectionStatus.set('connecting');
 
 	try {
-		// nats.ws uses nkey authenticator
-		const { fromSeed } = await import('nkeys.js');
 		const seedBytes = new TextEncoder().encode(seed);
-		const kp = fromSeed(seedBytes);
 
 		nc = await connect({
 			servers: natsUrl,
-			authenticator: (nonce?: Uint8Array) => {
-				if (!nonce) return;
-				const sig = kp.sign(nonce);
-				return {
-					nkey: kp.getPublicKey(),
-					sig: sig
-				};
-			},
+			authenticator: nkeyAuthenticator(seedBytes),
 			reconnect: true,
 			maxReconnectAttempts: -1,
 			reconnectTimeWait: 2000
