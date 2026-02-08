@@ -11,7 +11,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 		'Content-Security-Policy',
 		[
 			"default-src 'self'",
-			"script-src 'self'",
+			"script-src 'self' 'unsafe-inline'",
 			"style-src 'self' 'unsafe-inline'", // Tailwind needs inline styles
 			`connect-src 'self' wss://${event.url.host}`,
 			"img-src 'self' data: https://lh3.googleusercontent.com", // Google avatars
