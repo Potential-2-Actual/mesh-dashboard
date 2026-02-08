@@ -8,7 +8,7 @@ async function getConnection(): Promise<NatsConnection> {
 	if (nc && !nc.isClosed()) return nc;
 
 	const { fromSeed } = await import('nkeys.js');
-	const seed = env.NATS_SEED || '';
+	const seed = env.NATS_SERVER_SEED || env.NATS_SEED || '';
 	const seedBytes = new TextEncoder().encode(seed);
 	const kp = fromSeed(seedBytes);
 
@@ -26,43 +26,24 @@ async function getConnection(): Promise<NatsConnection> {
 
 export async function fetchHistory(count = 50): Promise<MessageEnvelope[]> {
 	const conn = await getConnection();
-	const jsm = await conn.jetstreamManager();
 	const js = conn.jetstream();
-
 	const messages: MessageEnvelope[] = [];
 
 	try {
-		const consumer = await js.consumers.get('MESH-MESSAGES', undefined);
-		// Try ordered consumer for last N messages
-		const iter = await js.consumers.get('MESH-MESSAGES');
-		// Use fetch
-		const batch = await iter.fetch({ max_messages: count });
+		// Use ordered consumer — ephemeral, replays from start, auto-cleaned
+		const consumer = await js.consumers.get('MESH-MESSAGES');
+		const batch = await consumer.fetch({ max_messages: count, expires: 5000 });
+
 		for await (const msg of batch) {
 			try {
 				const envelope: MessageEnvelope = JSON.parse(new TextDecoder().decode(msg.data));
 				messages.push(envelope);
-				msg.ack();
 			} catch { /* skip malformed */ }
 		}
 	} catch (err) {
 		console.error('Failed to fetch history:', err);
-		// Try a simpler approach - ordered consumer
-		try {
-			const ordered = await js.consumers.get('MESH-MESSAGES');
-			const batch = await ordered.consume({ max_messages: count });
-			let i = 0;
-			for await (const msg of batch) {
-				try {
-					const envelope: MessageEnvelope = JSON.parse(new TextDecoder().decode(msg.data));
-					messages.push(envelope);
-				} catch { /* skip */ }
-				i++;
-				if (i >= count) break;
-			}
-		} catch (err2) {
-			console.error('History fetch fallback also failed:', err2);
-		}
 	}
 
+	// Return last N messages
 	return messages.slice(-count);
 }

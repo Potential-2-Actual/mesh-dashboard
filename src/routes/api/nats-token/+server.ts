@@ -6,7 +6,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 	if (!locals.user) throw error(401, 'Unauthorized');
 
 	return json({
-		seed: env.DASHBOARD_NATS_SEED || '',
+		seed: env.DASHBOARD_BROWSER_SEED || '',
 		url: env.NATS_URL || 'wss://mesh.potential2actual.com/nats'
 	});
 };
