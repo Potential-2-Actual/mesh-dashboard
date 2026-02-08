@@ -36,7 +36,7 @@ export const POST: RequestHandler = async ({ locals, request }) => {
 	const envelope: MessageEnvelope = {
 		v: 1,
 		id: crypto.randomUUID(),
-		from: { agent: locals.user.name || 'gp', type: 'human' },
+		from: { agent: (locals.user.name || 'gp').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'gp', type: 'human' },
 		to: { subject },
 		content: { text },
 		ts: Math.floor(Date.now() / 1000),
