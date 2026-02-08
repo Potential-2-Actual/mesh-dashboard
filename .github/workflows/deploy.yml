@@ -1,0 +1,75 @@
+name: Deploy Mesh Dashboard
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  VM_NAME: nats-mesh
+  VM_ZONE: northamerica-northeast2-b
+  APP_DIR: /home/gp/mesh-dashboard
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package build
+        run: tar czf build.tar.gz build package.json package-lock.json
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Upload and deploy
+        run: |
+          gcloud compute scp build.tar.gz gp@${{ env.VM_NAME }}:/tmp/mesh-dashboard-build.tar.gz \
+            --zone=${{ env.VM_ZONE }} \
+            --tunnel-through-iap \
+            --quiet
+
+          gcloud compute ssh gp@${{ env.VM_NAME }} \
+            --zone=${{ env.VM_ZONE }} \
+            --tunnel-through-iap \
+            --quiet \
+            --command="
+              set -e
+              cd ${{ env.APP_DIR }}
+              tar xzf /tmp/mesh-dashboard-build.tar.gz
+              rm /tmp/mesh-dashboard-build.tar.gz
+              npm ci --omit=dev
+              sudo systemctl restart mesh-dashboard
+              echo '✅ Deploy complete'
+            "
+
+      - name: Health check
+        run: |
+          sleep 5
+          gcloud compute ssh gp@${{ env.VM_NAME }} \
+            --zone=${{ env.VM_ZONE }} \
+            --tunnel-through-iap \
+            --quiet \
+            --command="systemctl is-active mesh-dashboard && echo '✅ Dashboard running'"
