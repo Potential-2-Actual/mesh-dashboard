@@ -6,8 +6,8 @@ import crypto from 'crypto';
 
 export const GET: RequestHandler = async ({ cookies }) => {
 	const google = new Google(
-		env.GOOGLE_CLIENT_ID || '',
-		env.GOOGLE_CLIENT_SECRET || '',
+		env.GOOGLE_OAUTH_CLIENT_ID || '',
+		env.GOOGLE_OAUTH_CLIENT_SECRET || '',
 		`${env.ORIGIN || 'http://localhost:3100'}/auth/callback`
 	);
 
