@@ -22,7 +22,11 @@ function sign(payload: string): string {
 }
 
 function verify(payload: string, signature: string): boolean {
-	return sign(payload) === signature;
+	const expected = sign(payload);
+	const a = Buffer.from(expected);
+	const b = Buffer.from(signature);
+	if (a.length !== b.length) return false;
+	return crypto.timingSafeEqual(a, b);
 }
 
 export function setSession(cookies: Cookies, data: { email: string; name: string }) {

@@ -24,6 +24,7 @@
 		"@sveltejs/adapter-node": "^5.5.2",
 		"@tailwindcss/vite": "^4.1.18",
 		"arctic": "^3.7.0",
+		"nats": "^2.29.3",
 		"nats.ws": "^1.30.3",
 		"nkeys.js": "^1.1.0",
 		"tailwindcss": "^4.1.18"

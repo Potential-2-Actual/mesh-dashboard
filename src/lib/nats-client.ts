@@ -5,8 +5,19 @@ import { get } from 'svelte/store';
 
 let nc: NatsConnection | null = null;
 let subs: Subscription[] = [];
+let seedExpiresAt = 0;
+let currentNatsUrl = '';
+
+async function fetchSeed(): Promise<string> {
+	const res = await fetch('/api/nats-token');
+	if (!res.ok) throw new Error('Failed to fetch NATS credentials');
+	const { seed, expiresAt } = await res.json();
+	seedExpiresAt = expiresAt;
+	return seed;
+}
 
 export async function connectNats(natsUrl: string, seed: string) {
+	currentNatsUrl = natsUrl;
 	connectionStatus.set('connecting');
 
 	try {
@@ -32,13 +43,21 @@ export async function connectNats(natsUrl: string, seed: string) {
 
 		connectionStatus.set('connected');
 
-		// Monitor connection status
+		// Monitor connection status + re-fetch seed on reconnect
 		(async () => {
 			for await (const s of nc!.status()) {
 				if (s.type === 'disconnect' || s.type === 'error') {
 					connectionStatus.set('disconnected');
 				} else if (s.type === 'reconnect') {
 					connectionStatus.set('connected');
+					// Re-fetch seed if TTL expired
+					if (Date.now() > seedExpiresAt) {
+						try {
+							await fetchSeed();
+						} catch (err) {
+							console.warn('Seed re-fetch failed:', err);
+						}
+					}
 				}
 			}
 		})();
@@ -100,20 +119,17 @@ export async function connectNats(natsUrl: string, seed: string) {
 	}
 }
 
-export function publishMessage(text: string) {
-	if (!nc) return;
-
-	const envelope: MessageEnvelope = {
-		v: 1,
-		id: crypto.randomUUID(),
-		from: { agent: 'gp', type: 'human' },
-		to: { subject: 'mesh.channel.general' },
-		content: { text },
-		ts: Math.floor(Date.now() / 1000),
-		replyTo: null
-	};
-
-	nc.publish('mesh.channel.general', new TextEncoder().encode(JSON.stringify(envelope)));
+export async function publishMessage(text: string): Promise<void> {
+	// Publish via server-side API (hybrid model: browser subscribes, server publishes)
+	const res = await fetch('/api/send', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ text, subject: 'mesh.channel.general' })
+	});
+	if (!res.ok) {
+		const err = await res.text();
+		throw new Error(`Send failed: ${err}`);
+	}
 }
 
 export async function disconnectNats() {
