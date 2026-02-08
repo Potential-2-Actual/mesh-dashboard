@@ -6,24 +6,20 @@ on:
   workflow_dispatch:
 
 env:
-  VM_NAME: nats-mesh
-  VM_ZONE: northamerica-northeast2-b
-  APP_DIR: /home/gp/mesh-dashboard
+  VM_NAME: nats-mesh-staging
+  VM_ZONE: northamerica-northeast1-b
+  DEPLOY_PATH: /opt/mesh-dashboard
 
 jobs:
-  build-and-deploy:
-    name: Build & Deploy
+  deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
@@ -31,45 +27,53 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Package build
-        run: tar czf build.tar.gz build package.json package-lock.json
-
-      - name: Authenticate to GCP
+      - name: Auth to GCP
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Setup gcloud CLI
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
 
-      - name: Upload and deploy
+      - name: Create deploy package
+        run: tar czf /tmp/deploy.tar.gz build/ package.json package-lock.json
+
+      - name: Copy to VM
         run: |
-          gcloud compute scp build.tar.gz gp@${{ env.VM_NAME }}:/tmp/mesh-dashboard-build.tar.gz \
+          gcloud compute scp /tmp/deploy.tar.gz \
+            gp_potential2actual_com@${{ env.VM_NAME }}:/tmp/deploy.tar.gz \
             --zone=${{ env.VM_ZONE }} \
-            --tunnel-through-iap \
-            --quiet
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --tunnel-through-iap --quiet
 
-          gcloud compute ssh gp@${{ env.VM_NAME }} \
+      - name: Deploy on VM
+        run: |
+          gcloud compute ssh gp_potential2actual_com@${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
-            --tunnel-through-iap \
-            --quiet \
-            --command="
-              set -e
-              cd ${{ env.APP_DIR }}
-              tar xzf /tmp/mesh-dashboard-build.tar.gz
-              rm /tmp/mesh-dashboard-build.tar.gz
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --tunnel-through-iap --quiet \
+            --command='set -e
+              cd /opt/mesh-dashboard
+              [ -d build ] && mv build build.bak || true
+              tar xzf /tmp/deploy.tar.gz
               npm ci --omit=dev
+              rm -rf build.bak /tmp/deploy.tar.gz
               sudo systemctl restart mesh-dashboard
-              echo '✅ Deploy complete'
-            "
+              sleep 3
+              sudo systemctl is-active mesh-dashboard && echo "✅ Deploy complete"'
 
-      - name: Health check
+      - name: Update OAuth credentials
         run: |
-          sleep 5
-          gcloud compute ssh gp@${{ env.VM_NAME }} \
+          gcloud compute ssh gp_potential2actual_com@${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
-            --tunnel-through-iap \
-            --quiet \
-            --command="systemctl is-active mesh-dashboard && echo '✅ Dashboard running'"
+            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --tunnel-through-iap --quiet \
+            --command="cd /opt/mesh-dashboard && \
+              grep -q '^GOOGLE_OAUTH_CLIENT_ID=' .env 2>/dev/null && \
+                sed -i 's|^GOOGLE_OAUTH_CLIENT_ID=.*|GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|' .env || \
+                echo 'GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}' >> .env && \
+              grep -q '^GOOGLE_OAUTH_CLIENT_SECRET=' .env 2>/dev/null && \
+                sed -i 's|^GOOGLE_OAUTH_CLIENT_SECRET=.*|GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|' .env || \
+                echo 'GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}' >> .env && \
+              sudo systemctl restart mesh-dashboard && \
+              echo '✅ OAuth creds updated'"
