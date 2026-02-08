@@ -4,6 +4,8 @@ import { readFileSync } from 'fs';
 
 let connection: NatsConnection | null = null;
 
+export const getServerConnection = getNatsConnection;
+
 export async function getNatsConnection(): Promise<NatsConnection> {
 	if (connection && !connection.isClosed()) {
 		return connection;
@@ -11,13 +13,15 @@ export async function getNatsConnection(): Promise<NatsConnection> {
 
 	// Server-side uses TCP (nats://), not WebSocket
 	const url = env.NATS_URL ?? 'nats://10.162.0.3:4222';
+	let seed: string;
 	const seedPath = env.NATS_WRITE_SEED_PATH;
-
-	if (!seedPath) {
-		throw new Error('NATS_WRITE_SEED_PATH not configured');
+	if (seedPath) {
+		seed = readFileSync(seedPath, 'utf-8').split('\n')[0].trim();
+	} else if (env.NATS_SERVER_SEED) {
+		seed = env.NATS_SERVER_SEED;
+	} else {
+		throw new Error('NATS_WRITE_SEED_PATH or NATS_SERVER_SEED must be configured');
 	}
-
-	const seed = readFileSync(seedPath, 'utf-8').split('\n')[0].trim();
 	const seedBytes = new TextEncoder().encode(seed);
 
 	connection = await connect({
