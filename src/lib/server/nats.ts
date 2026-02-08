@@ -12,7 +12,7 @@ export async function getNatsConnection(): Promise<NatsConnection> {
 	}
 
 	// Server-side uses TCP (nats://), not WebSocket
-	const url = env.NATS_URL ?? 'nats://10.162.0.3:4222';
+	const url = env.NATS_SERVER_URL ?? 'nats://10.162.0.3:4222';
 	let seed: string;
 	const seedPath = env.NATS_WRITE_SEED_PATH;
 	if (seedPath) {
