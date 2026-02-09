@@ -157,17 +157,23 @@ export async function getChannelMembers(channel: string): Promise<MemberInfo[]> 
 	const members: MemberInfo[] = [];
 	const prefix = channel + '.';
 	try {
+		// Collect keys first, THEN fetch values — kv.get() inside kv.keys()
+		// async iterator causes NATS consumer conflicts (missing members)
+		const matchingKeys: string[] = [];
 		const keys = await kv.keys();
 		for await (const key of keys) {
 			if (key.startsWith(prefix)) {
-				try {
-					const entry = await kv.get(key);
-					if (entry && entry.value && entry.value.length > 0) {
-						const info = entry.json() as MemberInfo;
-						members.push(info);
-					}
-				} catch { /* skip */ }
+				matchingKeys.push(key);
 			}
+		}
+		for (const key of matchingKeys) {
+			try {
+				const entry = await kv.get(key);
+				if (entry && entry.value && entry.value.length > 0) {
+					const info = entry.json() as MemberInfo;
+					members.push(info);
+				}
+			} catch { /* skip */ }
 		}
 	} catch (err: any) {
 		// If no keys exist yet, keys() may throw
