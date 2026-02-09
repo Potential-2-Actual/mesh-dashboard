@@ -96,7 +96,7 @@
 				selectedIndex = (selectedIndex - 1 + suggestions.length) % suggestions.length;
 				return;
 			}
-			if (e.key === 'Enter') {
+			if (e.key === 'Enter' || e.key === 'Tab') {
 				e.preventDefault();
 				selectSuggestion(suggestions[selectedIndex].name);
 				return;
