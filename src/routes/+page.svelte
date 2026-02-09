@@ -133,6 +133,16 @@
 		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 	}
 
+	function renderMessage(text: string): string {
+		const escaped = escapeHtml(text);
+		// Highlight @mentions — color by presence type (human=emerald, agent=blue)
+		return escaped.replace(/@(\w+)/g, (match, name) => {
+			const agent = currentPresence.get(name);
+			const colorClass = agent?.type === 'human' ? 'text-emerald-400' : 'text-blue-400';
+			return `<span class="font-semibold ${colorClass}">@${name}</span>`;
+		});
+	}
+
 	function scrollToMessage(msgId: string) {
 		const el = document.getElementById(`msg-${msgId}`);
 		if (el) {
@@ -236,7 +246,7 @@
 					<div id="msg-{msg.id}" class="py-0.5 transition-colors duration-1000">
 						<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
 						<span class="ml-1 font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
-						<span class="ml-1 text-sm text-gray-200">{msg.content.text}</span>
+						<span class="ml-1 text-sm text-gray-200">{@html renderMessage(msg.content.text)}</span>
 					</div>
 				{/if}
 			{/each}
