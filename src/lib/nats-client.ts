@@ -1,6 +1,6 @@
 import { connect, type NatsConnection, type Subscription, nkeyAuthenticator } from 'nats.ws';
 import { messages, presence, connectionStatus, systemEvents, telemetry } from './stores.js';
-import type { MessageEnvelope, PresenceInfo, TelemetryPayload } from './types.js';
+import type { MessageEnvelope, PresenceInfo, TelemetryPayload, SessionHistoryResponse } from './types.js';
 import { get } from 'svelte/store';
 
 let nc: NatsConnection | null = null;
@@ -138,6 +138,18 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 		connectionStatus.set('disconnected');
 		throw err;
 	}
+}
+
+export async function requestSessionHistory(
+	agentName: string,
+	sessionKey: string,
+	limit: number = 50
+): Promise<SessionHistoryResponse> {
+	if (!nc) throw new Error('NATS not connected');
+	const subject = `mesh.session.${agentName}.history`;
+	const payload = JSON.stringify({ sessionKey, limit });
+	const response = await nc.request(subject, new TextEncoder().encode(payload), { timeout: 10000 });
+	return JSON.parse(new TextDecoder().decode(response.data));
 }
 
 export async function publishMessage(text: string): Promise<void> {

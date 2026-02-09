@@ -2,8 +2,8 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { messages, presence, connectionStatus, members, telemetry } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
-	import { connectNats, publishMessage, disconnectNats } from '$lib/nats-client.js';
-	import type { MessageEnvelope, MemberInfo, TelemetryPayload } from '$lib/types.js';
+	import { connectNats, publishMessage, disconnectNats, requestSessionHistory } from '$lib/nats-client.js';
+	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse } from '$lib/types.js';
 	import { page } from '$app/stores';
 
 	// Derive presence name from user (same sanitization as /api/send)
@@ -36,6 +36,13 @@
 
 	// Inspector state
 	let inspectorAgent = $state<string | null>(null);
+
+	// Session viewer state
+	let viewingSession = $state<{ agentName: string; sessionKey: string } | null>(null);
+	let sessionHistory = $state<SessionHistoryResponse | null>(null);
+	let sessionLoading = $state(false);
+	let sessionError = $state<string | null>(null);
+	let expandedThinking = $state<Set<string>>(new Set());
 
 	// Sidebar collapse state
 	let collapsedSections: Record<string, boolean> = $state({});
@@ -272,6 +279,44 @@
 		inspectorAgent = null;
 	}
 
+	async function openSessionViewer(agentName: string, sessionKey: string) {
+		viewingSession = { agentName, sessionKey };
+		sessionHistory = null;
+		sessionError = null;
+		sessionLoading = true;
+		expandedThinking = new Set();
+		// Close inspector if open
+		inspectorAgent = null;
+		try {
+			const result = await requestSessionHistory(agentName, sessionKey);
+			if ('error' in result) {
+				sessionError = (result as any).error;
+			} else {
+				sessionHistory = result;
+			}
+		} catch (err) {
+			sessionError = `Failed to load session: ${err}`;
+		}
+		sessionLoading = false;
+		// Scroll to bottom after render
+		await tick();
+		const el = document.getElementById('session-messages');
+		if (el) el.scrollTop = el.scrollHeight;
+	}
+
+	function closeSessionViewer() {
+		viewingSession = null;
+		sessionHistory = null;
+		sessionError = null;
+	}
+
+	function toggleThinking(msgId: string) {
+		const next = new Set(expandedThinking);
+		if (next.has(msgId)) next.delete(msgId);
+		else next.add(msgId);
+		expandedThinking = next;
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
@@ -285,6 +330,7 @@
 			toggleSearch();
 		}
 		if (e.key === 'Escape') {
+			if (viewingSession) { closeSessionViewer(); return; }
 			if (inspectorAgent) { closeInspector(); return; }
 			if (searchOpen) { searchOpen = false; searchQuery = ''; searchResults = []; }
 		}
@@ -392,8 +438,11 @@
 							<!-- Session list -->
 							{#if agent.sessions.length > 0}
 								{#each agent.sessions as session}
-									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-500 truncate"
-										title={session.key}>
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-500 truncate cursor-pointer hover:bg-gray-800/50 hover:text-gray-300 transition-colors"
+										title={session.key}
+										onclick={() => openSessionViewer(agent.name, session.key)}>
 										<span class="text-gray-600 text-[10px]">○</span>
 										<span class="truncate">{shortSessionLabel(session.key)}</span>
 									</div>
@@ -632,6 +681,82 @@
 						<div class="text-sm">No telemetry</div>
 						<div class="text-xs text-gray-700 mt-1">This agent hasn't reported yet</div>
 					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
+	<!-- Session viewer slide-out panel -->
+	{#if viewingSession}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="fixed inset-0 bg-black/30 z-40" onclick={closeSessionViewer}></div>
+		<div class="fixed right-0 top-0 h-full w-[520px] max-w-[90vw] bg-gray-900 border-l border-gray-700 z-50 flex flex-col shadow-2xl">
+			<div class="p-4 border-b border-gray-800">
+				<div class="flex items-center justify-between">
+					<div class="flex-1 min-w-0">
+						<h2 class="text-sm font-semibold text-gray-300 truncate" title={viewingSession.sessionKey}>{viewingSession.sessionKey}</h2>
+						{#if sessionHistory}
+							<div class="text-xs text-gray-500 mt-1">{sessionHistory.total} messages · session {sessionHistory.sessionId.slice(0, 8)}…</div>
+						{/if}
+					</div>
+					<button onclick={closeSessionViewer} class="text-gray-500 hover:text-gray-300 ml-2 flex-shrink-0">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+					</button>
+				</div>
+			</div>
+
+			<div id="session-messages" class="flex-1 overflow-y-auto p-4 space-y-2">
+				{#if sessionLoading}
+					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+						<svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+						Loading session…
+					</div>
+				{:else if sessionError}
+					<div class="flex items-center justify-center py-12 text-red-400 text-sm">{sessionError}</div>
+				{:else if sessionHistory}
+					{#each sessionHistory.messages as msg (msg.id)}
+						{#if msg.role === 'user'}
+							<div class="rounded-lg bg-gray-800 p-3 max-w-[90%]">
+								<div class="text-[10px] text-emerald-500 font-medium mb-1">User <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+								{#each msg.content as item}
+									{#if item.type === 'text' && item.text}
+										<div class="text-sm text-gray-200 whitespace-pre-wrap">{item.text}</div>
+									{/if}
+								{/each}
+							</div>
+						{:else if msg.role === 'assistant'}
+							<div class="rounded-lg bg-gray-850 bg-gray-800/70 p-3 max-w-[90%] border-l-2 border-blue-500/30">
+								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+								{#each msg.content as item, i}
+									{#if item.type === 'text' && item.text}
+										<div class="text-sm text-gray-200 whitespace-pre-wrap">{item.text}</div>
+									{:else if item.type === 'thinking'}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div class="text-xs text-gray-500 my-1 cursor-pointer hover:text-gray-400" onclick={() => toggleThinking(`${msg.id}-${i}`)}>
+											💭 Thinking…
+											{#if expandedThinking.has(`${msg.id}-${i}`)}
+												<div class="mt-1 text-gray-600 whitespace-pre-wrap">{item.text}</div>
+											{/if}
+										</div>
+									{:else if item.type === 'tool_use'}
+										<span class="inline-flex items-center gap-1 text-[10px] bg-gray-700 text-gray-400 rounded px-1.5 py-0.5 mr-1 my-0.5">🔧 {item.name}</span>
+									{/if}
+								{/each}
+							</div>
+						{:else if msg.role === 'toolResult'}
+							<div class="px-3 py-1">
+								{#each msg.content as item}
+									{#if item.type === 'tool_result'}
+										<span class="text-xs text-gray-500">{item.success ? '✅' : '❌'} {item.name}</span>
+									{/if}
+								{/each}
+							</div>
+						{/if}
+					{/each}
+				{:else}
+					<div class="flex items-center justify-center py-12 text-gray-600 text-sm">No messages</div>
 				{/if}
 			</div>
 		</div>

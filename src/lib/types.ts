@@ -31,6 +31,20 @@ export interface TelemetrySessionInfo {
 	model?: string;
 }
 
+export interface SessionHistoryMessage {
+	id: string;
+	role: 'user' | 'assistant' | 'toolResult';
+	content: Array<{ type: string; text?: string; name?: string; id?: string; success?: boolean }>;
+	timestamp: string;
+}
+
+export interface SessionHistoryResponse {
+	sessionKey: string;
+	sessionId: string;
+	messages: SessionHistoryMessage[];
+	total: number;
+}
+
 export interface TelemetryPayload {
 	agent: string;
 	version: string;
