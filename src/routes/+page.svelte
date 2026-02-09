@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { messages, presence, connectionStatus } from '$lib/stores.js';
+	import MentionInput from '$lib/components/MentionInput.svelte';
 	import { connectNats, publishMessage, disconnectNats } from '$lib/nats-client.js';
 	import type { MessageEnvelope } from '$lib/types.js';
 
@@ -106,9 +107,9 @@
 		<!-- Input -->
 		<div class="border-t border-gray-800 p-3">
 			<div class="flex gap-2">
-				<input
-					type="text"
+				<MentionInput
 					bind:value={messageInput}
+					presence={currentPresence}
 					onkeydown={handleKeydown}
 					placeholder="Type a message..."
 					class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
