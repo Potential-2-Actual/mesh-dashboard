@@ -1,16 +1,18 @@
 <script lang="ts">
-	import type { PresenceInfo } from '$lib/types.js';
+	import type { PresenceInfo, MemberInfo } from '$lib/types.js';
 
 	let {
 		value = $bindable(''),
 		presence,
+		members,
 		onkeydown: parentKeydown,
 		disabled = false,
 		placeholder = 'Type a message...',
 		class: className = ''
 	}: {
 		value: string;
-		presence: Map<string, PresenceInfo>;
+		presence?: Map<string, PresenceInfo>;
+		members?: Map<string, MemberInfo>;
 		onkeydown?: (e: KeyboardEvent) => void;
 		disabled?: boolean;
 		placeholder?: string;
@@ -20,25 +22,39 @@
 	let inputEl: HTMLInputElement;
 	let showDropdown = $state(false);
 	let selectedIndex = $state(0);
-	let mentionStart = $state(-1); // index of the '@' in the string
+	let mentionStart = $state(-1);
 	let query = $state('');
 
 	let suggestions = $derived.by(() => {
 		if (!showDropdown) return [];
-		const names = [...presence.values()].map((p) => ({ name: p.agent, type: p.type }));
+		// Use members if available, fall back to presence
+		let names: { name: string; type: string; online: boolean }[] = [];
+		if (members && members.size > 0) {
+			for (const [, m] of members) {
+				const online = presence ? presence.has(m.name) : false;
+				names.push({ name: m.name, type: m.type, online });
+			}
+		} else if (presence) {
+			for (const [, p] of presence) {
+				names.push({ name: p.agent, type: p.type, online: true });
+			}
+		}
+		// Sort: online first, then alphabetical
+		names.sort((a, b) => {
+			if (a.online !== b.online) return a.online ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
 		if (!query) return names;
 		const q = query.toLowerCase();
 		return names.filter((n) => n.name.toLowerCase().includes(q));
 	});
 
-	// Close when no matches
 	$effect(() => {
 		if (showDropdown && suggestions.length === 0) {
 			showDropdown = false;
 		}
 	});
 
-	// Clamp selectedIndex
 	$effect(() => {
 		if (selectedIndex >= suggestions.length) {
 			selectedIndex = Math.max(0, suggestions.length - 1);
@@ -48,12 +64,10 @@
 	function checkForMention() {
 		const cursor = inputEl?.selectionStart ?? 0;
 		const text = value;
-		// Walk backwards from cursor to find '@'
 		let i = cursor - 1;
 		while (i >= 0) {
 			const ch = text[i];
 			if (ch === '@') {
-				// Found it — everything between @ and cursor is the query
 				mentionStart = i;
 				query = text.slice(i + 1, cursor);
 				showDropdown = true;
@@ -72,8 +86,7 @@
 		const after = value.slice(cursor);
 		value = `${before}@${name} ${after}`;
 		showDropdown = false;
-		// Set cursor after inserted mention
-		const newPos = mentionStart + name.length + 2; // @name + space
+		const newPos = mentionStart + name.length + 2;
 		requestAnimationFrame(() => {
 			inputEl?.focus();
 			inputEl?.setSelectionRange(newPos, newPos);
@@ -107,12 +120,10 @@
 				return;
 			}
 		}
-		// Pass through to parent handler
 		parentKeydown?.(e);
 	}
 
 	function handleClick(e: MouseEvent) {
-		// Re-check on click since cursor may have moved
 		setTimeout(checkForMention, 0);
 	}
 </script>
@@ -127,8 +138,8 @@
 					onmousedown={(e) => { e.preventDefault(); selectSuggestion(suggestion.name); }}
 					onmouseenter={() => { selectedIndex = i; }}
 				>
-					<span class="inline-block h-2 w-2 rounded-full {suggestion.type === 'human' ? 'bg-emerald-400' : 'bg-blue-400'}"></span>
-					<span class="{suggestion.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{suggestion.name}</span>
+					<span class="inline-block h-2 w-2 rounded-full {suggestion.online ? (suggestion.type === 'human' ? 'bg-emerald-400' : 'bg-blue-400') : 'bg-gray-500'}"></span>
+					<span class="{suggestion.online ? (suggestion.type === 'human' ? 'text-emerald-400' : 'text-blue-400') : 'text-gray-500'}">{suggestion.name}</span>
 				</button>
 			{/each}
 		</div>

@@ -1,21 +1,20 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { messages, presence, connectionStatus } from '$lib/stores.js';
+	import { messages, presence, connectionStatus, members } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import { connectNats, publishMessage, disconnectNats } from '$lib/nats-client.js';
-	import type { MessageEnvelope } from '$lib/types.js';
+	import type { MessageEnvelope, MemberInfo } from '$lib/types.js';
 
 	let messageInput = $state('');
 	let feedEl: HTMLElement;
 	let currentMessages: MessageEnvelope[] = $state([]);
 	let currentPresence: Map<string, any> = $state(new Map());
+	let currentMembers: Map<string, MemberInfo> = $state(new Map());
 	let currentStatus: string = $state('disconnected');
 
-	// Pagination state
 	let hasMore = $state(false);
 	let loadingMore = $state(false);
 
-	// Search state
 	let searchOpen = $state(false);
 	let searchQuery = $state('');
 	let searchResults: MessageEnvelope[] = $state([]);
@@ -26,7 +25,21 @@
 
 	const unsubMsgs = messages.subscribe((v) => { currentMessages = v; scrollToBottom(); });
 	const unsubPresence = presence.subscribe((v) => { currentPresence = v; });
+	const unsubMembers = members.subscribe((v) => { currentMembers = v; });
 	const unsubStatus = connectionStatus.subscribe((v) => { currentStatus = v; });
+
+	// Sorted members list: online first, then alphabetical
+	let sortedMembers = $derived.by(() => {
+		const list = [...currentMembers.values()].map(m => ({
+			...m,
+			online: currentPresence.has(m.name)
+		}));
+		list.sort((a, b) => {
+			if (a.online !== b.online) return a.online ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
+		return list;
+	});
 
 	async function scrollToBottom() {
 		await tick();
@@ -55,21 +68,16 @@
 	async function loadMore() {
 		if (loadingMore || !hasMore || currentMessages.length === 0) return;
 		loadingMore = true;
-
 		const oldestTs = currentMessages[0]?.ts;
 		const prevScrollHeight = feedEl?.scrollHeight ?? 0;
-
 		try {
 			const res = await fetch(`/api/history?before=${oldestTs}&limit=50`);
 			if (res.ok) {
 				const data = await res.json();
 				if (data.messages.length > 0) {
-					// Prepend older messages
 					const combined = [...data.messages, ...currentMessages];
 					messages.set(combined);
 					hasMore = data.hasMore;
-
-					// Preserve scroll position
 					await tick();
 					if (feedEl) {
 						const newScrollHeight = feedEl.scrollHeight;
@@ -83,7 +91,6 @@
 		loadingMore = false;
 	}
 
-	// Search functions
 	function toggleSearch() {
 		searchOpen = !searchOpen;
 		if (!searchOpen) {
@@ -135,11 +142,13 @@
 
 	function renderMessage(text: string): string {
 		const escaped = escapeHtml(text);
-		// Highlight @mentions — color by presence type (human=emerald, agent=blue)
 		return escaped.replace(/@(\w+)/g, (match, name) => {
+			// Check members first, then presence
+			const member = currentMembers.get(name);
 			const agent = currentPresence.get(name);
-			if (!agent) return match; // Only highlight known users
-			const colorClass = agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400';
+			if (!member && !agent) return match;
+			const type = member?.type ?? agent?.type ?? 'ai';
+			const colorClass = type === 'human' ? 'text-emerald-400' : 'text-blue-400';
 			return `<span class="font-semibold ${colorClass}">@${name}</span>`;
 		});
 	}
@@ -173,8 +182,25 @@
 		}
 	}
 
+	async function fetchMembers() {
+		try {
+			const res = await fetch('/api/members?channel=general');
+			if (res.ok) {
+				const data = await res.json();
+				const map = new Map<string, MemberInfo>();
+				for (const m of data.members) {
+					map.set(m.name, m);
+				}
+				members.set(map);
+			}
+		} catch { /* skip */ }
+	}
+
 	onMount(async () => {
 		document.addEventListener('keydown', handleGlobalKeydown);
+
+		// Load members
+		await fetchMembers();
 
 		// Load history
 		try {
@@ -186,7 +212,7 @@
 			}
 		} catch { /* skip */ }
 
-		// Get NATS token and connect
+		// Connect NATS
 		try {
 			const res = await fetch('/api/nats-token');
 			if (res.ok) {
@@ -202,6 +228,7 @@
 		typeof document !== "undefined" && document.removeEventListener('keydown', handleGlobalKeydown);
 		unsubMsgs();
 		unsubPresence();
+		unsubMembers();
 		unsubStatus();
 		disconnectNats();
 	});
@@ -223,7 +250,6 @@
 
 		<!-- Message feed -->
 		<div bind:this={feedEl} class="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-			<!-- Load more button -->
 			{#if hasMore}
 				<div class="flex justify-center py-2">
 					<button
@@ -262,6 +288,7 @@
 				<MentionInput
 					bind:value={messageInput}
 					presence={currentPresence}
+					members={currentMembers}
 					onkeydown={handleKeydown}
 					placeholder="Type a message..."
 					class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
@@ -280,7 +307,6 @@
 
 	<!-- Search slide-out panel -->
 	{#if searchOpen}
-		<!-- Backdrop -->
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="fixed inset-0 bg-black/30 z-40" onclick={() => { searchOpen = false; }}></div>
@@ -333,16 +359,16 @@
 		</div>
 	{/if}
 
-	<!-- Presence sidebar -->
+	<!-- Members sidebar -->
 	<div class="hidden w-48 border-l border-gray-800 p-3 md:block">
-		<h2 class="mb-2 text-xs font-semibold uppercase text-gray-500">Online</h2>
-		{#each [...currentPresence.values()] as agent}
+		<h2 class="mb-2 text-xs font-semibold uppercase text-gray-500">Members ({sortedMembers.length})</h2>
+		{#each sortedMembers as agent}
 			<div class="flex items-center gap-2 py-1">
-				<span class="inline-block h-2 w-2 rounded-full bg-emerald-400"></span>
-				<span class="text-sm {agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{agent.agent}</span>
+				<span class="inline-block h-2 w-2 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
+				<span class="text-sm {agent.online ? (agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400') : 'text-gray-500'}">{agent.name}</span>
 			</div>
 		{:else}
-			<div class="text-xs text-gray-600">No agents online</div>
+			<div class="text-xs text-gray-600">No members</div>
 		{/each}
 	</div>
 </div>
