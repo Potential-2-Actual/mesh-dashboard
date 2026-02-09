@@ -517,10 +517,11 @@
 								{#each agent.sessions as session}
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
-									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-500 truncate cursor-pointer hover:bg-gray-800/50 hover:text-gray-300 transition-colors"
-										title={session.key}
+									{@const isActive = session.updatedAt > 0 && (Date.now() - session.updatedAt) < 5 * 60 * 1000}
+									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {isActive ? 'text-gray-300' : 'text-gray-600'}"
+										title="{session.key}{isActive ? ' (active)' : ''}"
 										onclick={() => openSessionViewer(agent.name, session.key)}>
-										<span class="text-gray-600 text-[10px]">○</span>
+										<span class="text-[10px] {isActive ? 'text-green-400' : 'text-gray-700'}">{isActive ? '●' : '○'}</span>
 										<span class="truncate">{shortSessionLabel(session.key)}</span>
 									</div>
 								{/each}
