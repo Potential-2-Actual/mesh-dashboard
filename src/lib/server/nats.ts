@@ -152,13 +152,26 @@ async function getMembersKv() {
 	return js.views.kv('MESH-MEMBERS');
 }
 
+/**
+ * ⚠️  NATS KV ITERATION PATTERN — DO NOT REFACTOR ⚠️
+ *
+ * This function deliberately collects ALL keys first, THEN fetches values
+ * in a separate loop. This looks like it could be simplified into a single
+ * loop, but DO NOT combine them.
+ *
+ * Calling kv.get() inside a kv.keys() async iterator creates concurrent
+ * JetStream consumers on the same KV bucket, which causes consumer conflicts.
+ * The result: silently missing entries (only the first key is returned).
+ *
+ * This bug was fixed twice: Sprint 12 (PR #9) and again in commit 1706f3e.
+ * If you're reading this and thinking "I can simplify this" — don't.
+ */
 export async function getChannelMembers(channel: string): Promise<MemberInfo[]> {
 	const kv = await getMembersKv();
 	const members: MemberInfo[] = [];
 	const prefix = channel + '.';
 	try {
-		// Collect keys first, THEN fetch values — kv.get() inside kv.keys()
-		// async iterator causes NATS consumer conflicts (missing members)
+		// Step 1: Collect keys (consumes the async iterator fully)
 		const matchingKeys: string[] = [];
 		const keys = await kv.keys();
 		for await (const key of keys) {
@@ -166,6 +179,7 @@ export async function getChannelMembers(channel: string): Promise<MemberInfo[]> 
 				matchingKeys.push(key);
 			}
 		}
+		// Step 2: Fetch values (safe — iterator is done)
 		for (const key of matchingKeys) {
 			try {
 				const entry = await kv.get(key);
