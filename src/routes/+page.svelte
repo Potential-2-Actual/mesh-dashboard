@@ -76,24 +76,29 @@
 				activeCount: telem.sessions.active
 			});
 		}
-		// Also add members with no telemetry
-		for (const [name, member] of currentMembers) {
-			if (!currentTelemetry.has(name)) {
-				agents.push({
-					name,
-					type: member.type,
-					online: currentPresence.has(name),
-					sessions: [],
-					activeCount: 0
-				});
-			}
-		}
+		// Members without telemetry are NOT added here —
+		// they render in the "People" section in the sidebar template
 		agents.sort((a, b) => {
 			if (a.type !== b.type) return a.type === 'human' ? -1 : 1;
 			if (a.online !== b.online) return a.online ? -1 : 1;
 			return a.name.localeCompare(b.name);
 		});
 		return agents;
+	});
+
+	// Members without telemetry (e.g. humans) — simple list, no disclosure
+	let sidebarPeople = $derived.by(() => {
+		const people: Array<{ name: string; type: 'human' | 'ai'; online: boolean }> = [];
+		for (const [name, member] of currentMembers) {
+			if (!currentTelemetry.has(name)) {
+				people.push({ name, type: member.type, online: currentPresence.has(name) });
+			}
+		}
+		people.sort((a, b) => {
+			if (a.online !== b.online) return a.online ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
+		return people;
 	});
 
 	const unsubMsgs = messages.subscribe((v) => { currentMessages = v; scrollToBottom(); });
@@ -400,6 +405,21 @@
 					{/if}
 				</div>
 			{/each}
+
+			<!-- People section (members without telemetry) -->
+			{#if sidebarPeople.length > 0}
+				<div class="px-2 mb-1 mt-2">
+					<div class="px-2 py-1 text-[10px] font-bold uppercase text-gray-500">
+						<span>👥 People</span>
+					</div>
+					{#each sidebarPeople as person}
+						<div class="flex items-center gap-1.5 px-2 py-1 ml-2 text-sm">
+							<span class="inline-block h-1.5 w-1.5 rounded-full {person.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
+							<span class="{person.online ? 'text-emerald-400' : 'text-gray-500'}">{person.name}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 
 		<!-- Bottom: connection status -->
