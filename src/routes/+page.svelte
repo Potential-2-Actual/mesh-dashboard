@@ -188,7 +188,7 @@
 	});
 
 	onDestroy(() => {
-		document.removeEventListener('keydown', handleGlobalKeydown);
+		typeof document !== "undefined" && document.removeEventListener('keydown', handleGlobalKeydown);
 		unsubMsgs();
 		unsubPresence();
 		unsubStatus();
