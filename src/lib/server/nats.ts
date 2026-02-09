@@ -142,3 +142,86 @@ export async function searchMessages(options: { query: string; channel?: string 
 		return { results: [], total: 0, truncated: false };
 	}
 }
+
+// --- KV membership functions ---
+import type { MemberInfo } from '$lib/types.js';
+
+async function getMembersKv() {
+	const nc = await getNatsConnection();
+	const js = nc.jetstream();
+	return js.views.kv('MESH-MEMBERS');
+}
+
+export async function getChannelMembers(channel: string): Promise<MemberInfo[]> {
+	const kv = await getMembersKv();
+	const members: MemberInfo[] = [];
+	const prefix = channel + '.';
+	try {
+		const keys = await kv.keys();
+		for await (const key of keys) {
+			if (key.startsWith(prefix)) {
+				try {
+					const entry = await kv.get(key);
+					if (entry && entry.value && entry.value.length > 0) {
+						const info = entry.json() as MemberInfo;
+						members.push(info);
+					}
+				} catch { /* skip */ }
+			}
+		}
+	} catch (err: any) {
+		// If no keys exist yet, keys() may throw
+		if (!err?.message?.includes('no keys')) {
+			console.error('getChannelMembers error:', err);
+		}
+	}
+	return members;
+}
+
+export async function addChannelMember(channel: string, name: string, type: 'human' | 'ai'): Promise<void> {
+	const kv = await getMembersKv();
+	const key = `${channel}.${name}`;
+	// Check if already exists
+	try {
+		const existing = await kv.get(key);
+		if (existing && existing.value && existing.value.length > 0) return; // already a member
+	} catch { /* not found, proceed */ }
+	const info: MemberInfo = { name, type, joinedAt: Date.now() };
+	await kv.put(key, JSON.stringify(info));
+}
+
+export async function removeChannelMember(channel: string, name: string): Promise<void> {
+	const kv = await getMembersKv();
+	await kv.delete(`${channel}.${name}`);
+}
+
+export async function seedMembersFromHistory(channel: string): Promise<void> {
+	const nc = await getNatsConnection();
+	const jsm = await nc.jetstreamManager();
+	const js = nc.jetstream();
+
+	try {
+		const consumer = await jsm.consumers.add('MESH-MESSAGES', {
+			filter_subject: `mesh.channel.${channel}`,
+			deliver_policy: 'all' as any,
+			ack_policy: 'none' as any,
+			inactive_threshold: 30_000_000_000
+		});
+		const sub = await js.consumers.get('MESH-MESSAGES', consumer.name);
+		const iter = await sub.fetch({ max_messages: 5000, expires: 4000 });
+
+		const seen = new Set<string>();
+		for await (const msg of iter) {
+			try {
+				const envelope = JSON.parse(new TextDecoder().decode(msg.data));
+				if (envelope.v === 1 && envelope.from?.agent && !seen.has(envelope.from.agent)) {
+					seen.add(envelope.from.agent);
+					await addChannelMember(channel, envelope.from.agent, envelope.from.type === 'human' ? 'human' : 'ai');
+				}
+			} catch { /* skip */ }
+		}
+		console.log(`Seeded ${seen.size} members for channel ${channel}`);
+	} catch (err) {
+		console.error('seedMembersFromHistory error:', err);
+	}
+}

@@ -14,3 +14,9 @@ export interface PresenceInfo {
 	status: 'online' | 'offline';
 	lastSeen: number;
 }
+
+export interface MemberInfo {
+	name: string;
+	type: 'human' | 'ai';
+	joinedAt: number;
+}
