@@ -138,7 +138,8 @@
 		// Highlight @mentions — color by presence type (human=emerald, agent=blue)
 		return escaped.replace(/@(\w+)/g, (match, name) => {
 			const agent = currentPresence.get(name);
-			const colorClass = agent?.type === 'human' ? 'text-emerald-400' : 'text-blue-400';
+			if (!agent) return match; // Only highlight known users
+			const colorClass = agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400';
 			return `<span class="font-semibold ${colorClass}">@${name}</span>`;
 		});
 	}
