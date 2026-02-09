@@ -7,6 +7,7 @@ let nc: NatsConnection | null = null;
 let subs: Subscription[] = [];
 let seedExpiresAt = 0;
 let currentNatsUrl = '';
+let presenceInterval: ReturnType<typeof setInterval> | null = null;
 
 async function fetchSeed(): Promise<string> {
 	const res = await fetch('/api/nats-token');
@@ -16,7 +17,7 @@ async function fetchSeed(): Promise<string> {
 	return seed;
 }
 
-export async function connectNats(natsUrl: string, seed: string) {
+export async function connectNats(natsUrl: string, seed: string, userName?: string) {
 	currentNatsUrl = natsUrl;
 	connectionStatus.set('connecting');
 
@@ -102,6 +103,21 @@ export async function connectNats(natsUrl: string, seed: string) {
 			}
 		})();
 
+		// Publish presence heartbeat for dashboard user
+		if (userName) {
+			const publishPresence = () => {
+				if (nc && !nc.isClosed()) {
+					nc.publish(`mesh.presence.${userName}`, new TextEncoder().encode(JSON.stringify({
+						type: 'human',
+						status: 'online',
+						ts: Date.now()
+					})));
+				}
+			};
+			publishPresence(); // immediately
+			presenceInterval = setInterval(publishPresence, 30000); // every 30s
+		}
+
 	} catch (err) {
 		console.error('NATS connection failed:', err);
 		connectionStatus.set('disconnected');
@@ -123,6 +139,10 @@ export async function publishMessage(text: string): Promise<void> {
 }
 
 export async function disconnectNats() {
+	if (presenceInterval) {
+		clearInterval(presenceInterval);
+		presenceInterval = null;
+	}
 	for (const s of subs) s.unsubscribe();
 	subs = [];
 	if (nc) {

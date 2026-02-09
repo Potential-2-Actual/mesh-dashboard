@@ -4,6 +4,14 @@
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import { connectNats, publishMessage, disconnectNats } from '$lib/nats-client.js';
 	import type { MessageEnvelope, MemberInfo } from '$lib/types.js';
+	import { page } from '$app/stores';
+
+	// Derive presence name from user (same sanitization as /api/send)
+	let userName = $derived.by(() => {
+		const user = $page.data?.user;
+		if (!user?.name) return 'gp';
+		return user.name.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) || 'gp';
+	});
 
 	let messageInput = $state('');
 	let feedEl: HTMLElement;
@@ -217,7 +225,7 @@
 			const res = await fetch('/api/nats-token');
 			if (res.ok) {
 				const { seed, url } = await res.json();
-				await connectNats(url, seed);
+				await connectNats(url, seed, userName);
 			}
 		} catch (err) {
 			console.error('Failed to connect to NATS:', err);
