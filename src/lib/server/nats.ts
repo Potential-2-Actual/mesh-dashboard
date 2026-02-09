@@ -36,37 +36,109 @@ export async function getNatsConnection(): Promise<NatsConnection> {
 	return connection;
 }
 
-export async function fetchHistory(maxMessages: number = 50): Promise<any[]> {
+export async function fetchHistory(options: { before?: number; limit?: number } = {}): Promise<{ messages: any[]; hasMore: boolean }> {
+	const { before, limit = 50 } = options;
 	const nc = await getNatsConnection();
 	const jsm = await nc.jetstreamManager();
 	const js = nc.jetstream();
 
 	try {
-		// Create ephemeral ordered consumer for replay
-		const consumer = await jsm.consumers.add('MESH-MESSAGES', {
-			deliver_policy: 'last_per_subject' as any,
+		const consumerConfig: any = {
 			filter_subject: 'mesh.channel.general',
 			ack_policy: 'none' as any,
-			inactive_threshold: 30_000_000_000 // 30s nanos — auto-cleanup
-		});
+			inactive_threshold: 30_000_000_000
+		};
 
+		if (before) {
+			// Fetch all messages up to `before` timestamp, then take the last `limit`
+			consumerConfig.deliver_policy = 'all';
+		} else {
+			// Initial load: get all messages, take the last `limit`
+			consumerConfig.deliver_policy = 'all';
+		}
+
+		const consumer = await jsm.consumers.add('MESH-MESSAGES', consumerConfig);
 		const sub = await js.consumers.get('MESH-MESSAGES', consumer.name);
-		const iter = await sub.fetch({ max_messages: maxMessages, expires: 3000 });
+		// Fetch more than needed to determine hasMore
+		const iter = await sub.fetch({ max_messages: 5000, expires: 4000 });
 
-		const messages: any[] = [];
+		const allMessages: any[] = [];
 		for await (const msg of iter) {
 			try {
 				const envelope = JSON.parse(new TextDecoder().decode(msg.data));
 				if (envelope.v === 1) {
-					messages.push(envelope);
+					allMessages.push(envelope);
 				}
 			} catch { /* skip malformed */ }
 		}
 
-		messages.sort((a, b) => a.ts - b.ts);
-		return messages;
+		// Sort chronologically
+		allMessages.sort((a, b) => a.ts - b.ts);
+
+		// Filter by `before` if specified
+		let filtered = before
+			? allMessages.filter((m) => m.ts < before)
+			: allMessages;
+
+		// Take the last `limit` messages (most recent ones before the cutoff)
+		const hasMore = filtered.length > limit;
+		const messages = filtered.slice(-limit);
+
+		return { messages, hasMore };
 	} catch (err) {
 		console.error('JetStream history fetch failed:', err);
-		return [];
+		return { messages: [], hasMore: false };
+	}
+}
+
+export async function searchMessages(options: { query: string; channel?: string }): Promise<{ results: any[]; total: number; truncated: boolean }> {
+	const { query, channel = 'mesh.channel.general' } = options;
+	const nc = await getNatsConnection();
+	const jsm = await nc.jetstreamManager();
+	const js = nc.jetstream();
+
+	const MAX_RESULTS = 100;
+	const TIMEOUT_MS = 5000;
+
+	try {
+		const consumer = await jsm.consumers.add('MESH-MESSAGES', {
+			deliver_policy: 'all' as any,
+			filter_subject: channel,
+			ack_policy: 'none' as any,
+			inactive_threshold: 30_000_000_000
+		});
+
+		const sub = await js.consumers.get('MESH-MESSAGES', consumer.name);
+		const iter = await sub.fetch({ max_messages: 5000, expires: 4000 });
+
+		const results: any[] = [];
+		const lowerQuery = query.toLowerCase();
+		const startTime = Date.now();
+		let total = 0;
+		let truncated = false;
+
+		for await (const msg of iter) {
+			if (Date.now() - startTime > TIMEOUT_MS) {
+				truncated = true;
+				break;
+			}
+			try {
+				const envelope = JSON.parse(new TextDecoder().decode(msg.data));
+				if (envelope.v === 1 && envelope.content?.text?.toLowerCase().includes(lowerQuery)) {
+					total++;
+					if (results.length < MAX_RESULTS) {
+						results.push(envelope);
+					} else {
+						truncated = true;
+					}
+				}
+			} catch { /* skip */ }
+		}
+
+		results.sort((a, b) => a.ts - b.ts);
+		return { results, total, truncated };
+	} catch (err) {
+		console.error('JetStream search failed:', err);
+		return { results: [], total: 0, truncated: false };
 	}
 }
