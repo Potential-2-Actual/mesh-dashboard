@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { messages, presence, connectionStatus, members } from '$lib/stores.js';
+	import { messages, presence, connectionStatus, members, telemetry } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import { connectNats, publishMessage, disconnectNats } from '$lib/nats-client.js';
-	import type { MessageEnvelope, MemberInfo } from '$lib/types.js';
+	import type { MessageEnvelope, MemberInfo, TelemetryPayload } from '$lib/types.js';
 	import { page } from '$app/stores';
 
 	// Derive presence name from user (same sanitization as /api/send)
@@ -18,11 +18,14 @@
 	let currentMessages: MessageEnvelope[] = $state([]);
 	let currentPresence: Map<string, any> = $state(new Map());
 	let currentMembers: Map<string, MemberInfo> = $state(new Map());
+	let currentTelemetry: Map<string, TelemetryPayload> = $state(new Map());
 	let currentStatus: string = $state('disconnected');
 
+	// Pagination state
 	let hasMore = $state(false);
 	let loadingMore = $state(false);
 
+	// Search state
 	let searchOpen = $state(false);
 	let searchQuery = $state('');
 	let searchResults: MessageEnvelope[] = $state([]);
@@ -31,10 +34,14 @@
 	let searchLoading = $state(false);
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
+	// Inspector state
+	let inspectorAgent = $state<string | null>(null);
+
 	const unsubMsgs = messages.subscribe((v) => { currentMessages = v; scrollToBottom(); });
 	const unsubPresence = presence.subscribe((v) => { currentPresence = v; });
 	const unsubMembers = members.subscribe((v) => { currentMembers = v; });
 	const unsubStatus = connectionStatus.subscribe((v) => { currentStatus = v; });
+	const unsubTelemetry = telemetry.subscribe((v) => { currentTelemetry = v; });
 
 	// Sorted members list: online first, then alphabetical
 	let sortedMembers = $derived.by(() => {
@@ -49,6 +56,17 @@
 		return list;
 	});
 
+	// Current inspector telemetry
+	let inspectorData = $derived.by(() => {
+		if (!inspectorAgent) return null;
+		return currentTelemetry.get(inspectorAgent) ?? null;
+	});
+
+	let inspectorIsStale = $derived.by(() => {
+		if (!inspectorData) return false;
+		return (Date.now() / 1000 - inspectorData.ts) > 120; // stale if >2min old
+	});
+
 	async function scrollToBottom() {
 		await tick();
 		if (feedEl) feedEl.scrollTop = feedEl.scrollHeight;
@@ -60,6 +78,19 @@
 
 	function formatDateTime(ts: number): string {
 		return new Date(ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+	}
+
+	function formatUptime(seconds: number): string {
+		if (seconds < 60) return `${seconds}s`;
+		if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+		if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+		return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+	}
+
+	function formatTokens(n: number): string {
+		if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+		if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+		return `${n}`;
 	}
 
 	function isSystemMessage(msg: MessageEnvelope): boolean {
@@ -88,8 +119,7 @@
 					hasMore = data.hasMore;
 					await tick();
 					if (feedEl) {
-						const newScrollHeight = feedEl.scrollHeight;
-						feedEl.scrollTop = newScrollHeight - prevScrollHeight;
+						feedEl.scrollTop = feedEl.scrollHeight - prevScrollHeight;
 					}
 				} else {
 					hasMore = false;
@@ -151,7 +181,6 @@
 	function renderMessage(text: string): string {
 		const escaped = escapeHtml(text);
 		return escaped.replace(/@(\w+)/g, (match, name) => {
-			// Check members first, then presence
 			const member = currentMembers.get(name);
 			const agent = currentPresence.get(name);
 			if (!member && !agent) return match;
@@ -171,6 +200,14 @@
 		searchOpen = false;
 	}
 
+	function openInspector(agentName: string) {
+		inspectorAgent = agentName;
+	}
+
+	function closeInspector() {
+		inspectorAgent = null;
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
@@ -183,10 +220,9 @@
 			e.preventDefault();
 			toggleSearch();
 		}
-		if (e.key === 'Escape' && searchOpen) {
-			searchOpen = false;
-			searchQuery = '';
-			searchResults = [];
+		if (e.key === 'Escape') {
+			if (inspectorAgent) { closeInspector(); return; }
+			if (searchOpen) { searchOpen = false; searchQuery = ''; searchResults = []; }
 		}
 	}
 
@@ -206,11 +242,8 @@
 
 	onMount(async () => {
 		document.addEventListener('keydown', handleGlobalKeydown);
-
-		// Load members
 		await fetchMembers();
 
-		// Load history
 		try {
 			const res = await fetch('/api/history');
 			if (res.ok) {
@@ -220,7 +253,6 @@
 			}
 		} catch { /* skip */ }
 
-		// Connect NATS
 		try {
 			const res = await fetch('/api/nats-token');
 			if (res.ok) {
@@ -238,6 +270,7 @@
 		unsubPresence();
 		unsubMembers();
 		unsubStatus();
+		unsubTelemetry();
 		disconnectNats();
 	});
 </script>
@@ -260,11 +293,8 @@
 		<div bind:this={feedEl} class="flex-1 overflow-y-auto px-4 py-2 space-y-1">
 			{#if hasMore}
 				<div class="flex justify-center py-2">
-					<button
-						onclick={loadMore}
-						disabled={loadingMore}
-						class="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded-md disabled:opacity-50 transition-colors"
-					>
+					<button onclick={loadMore} disabled={loadingMore}
+						class="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded-md disabled:opacity-50 transition-colors">
 						{loadingMore ? 'Loading...' : '↑ Load older messages'}
 					</button>
 				</div>
@@ -302,11 +332,9 @@
 					class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
 					disabled={currentStatus !== 'connected'}
 				/>
-				<button
-					onclick={send}
+				<button onclick={send}
 					disabled={currentStatus !== 'connected' || !messageInput.trim()}
-					class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
-				>
+					class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed">
 					Send
 				</button>
 			</div>
@@ -318,7 +346,6 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="fixed inset-0 bg-black/30 z-40" onclick={() => { searchOpen = false; }}></div>
-
 		<div class="fixed right-0 top-0 h-full w-96 max-w-[90vw] bg-gray-900 border-l border-gray-700 z-50 flex flex-col shadow-2xl">
 			<div class="p-4 border-b border-gray-800">
 				<div class="flex items-center justify-between mb-3">
@@ -327,21 +354,16 @@
 						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
 					</button>
 				</div>
-				<input
-					type="text"
-					bind:value={searchQuery}
-					oninput={handleSearchInput}
+				<input type="text" bind:value={searchQuery} oninput={handleSearchInput}
 					placeholder="Search messages..."
 					class="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-blue-500"
-					autofocus
-				/>
+					autofocus />
 				{#if searchTotal > 0}
 					<div class="mt-2 text-xs text-gray-500">
 						{searchTotal} result{searchTotal !== 1 ? 's' : ''}{searchTruncated ? ' (truncated)' : ''}
 					</div>
 				{/if}
 			</div>
-
 			<div class="flex-1 overflow-y-auto p-2">
 				{#if searchLoading}
 					<div class="flex items-center justify-center py-8 text-gray-500 text-sm">Searching...</div>
@@ -351,10 +373,8 @@
 					{#each searchResults as result}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div
-							class="p-2 rounded-md hover:bg-gray-800 cursor-pointer mb-1 transition-colors"
-							onclick={() => scrollToMessage(result.id)}
-						>
+						<div class="p-2 rounded-md hover:bg-gray-800 cursor-pointer mb-1 transition-colors"
+							onclick={() => scrollToMessage(result.id)}>
 							<div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
 								<span>{formatDateTime(result.ts)}</span>
 								<span class="font-medium {result.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{result.from.agent}</span>
@@ -367,13 +387,117 @@
 		</div>
 	{/if}
 
+	<!-- Inspector slide-out panel -->
+	{#if inspectorAgent}
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="fixed inset-0 bg-black/30 z-40" onclick={closeInspector}></div>
+		<div class="fixed right-0 top-0 h-full w-[420px] max-w-[90vw] bg-gray-900 border-l border-gray-700 z-50 flex flex-col shadow-2xl">
+			<div class="p-4 border-b border-gray-800">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-2">
+						<span class="inline-block h-2.5 w-2.5 rounded-full {currentPresence.has(inspectorAgent) ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
+						<h2 class="text-base font-semibold {currentMembers.get(inspectorAgent)?.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{inspectorAgent}</h2>
+						{#if inspectorIsStale}
+							<span class="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">STALE</span>
+						{/if}
+					</div>
+					<button onclick={closeInspector} class="text-gray-500 hover:text-gray-300">
+						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+					</button>
+				</div>
+			</div>
+
+			<div class="flex-1 overflow-y-auto p-4 space-y-4">
+				{#if inspectorData}
+					<!-- Overview -->
+					<div class="grid grid-cols-2 gap-3">
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Model</div>
+							<div class="text-sm text-gray-200 truncate">{inspectorData.model}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Version</div>
+							<div class="text-sm text-gray-200">{inspectorData.version}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Uptime</div>
+							<div class="text-sm text-gray-200">{formatUptime(inspectorData.uptime)}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Last Report</div>
+							<div class="text-sm text-gray-200">{formatTime(inspectorData.ts)}</div>
+						</div>
+					</div>
+
+					<!-- Sessions overview -->
+					<div class="bg-gray-800 rounded-lg p-3">
+						<div class="flex items-center justify-between mb-2">
+							<div class="text-[10px] uppercase text-gray-500">Sessions</div>
+							<div class="text-xs text-gray-400">{inspectorData.sessions.active} active / {inspectorData.sessions.total} total</div>
+						</div>
+						{#if inspectorData.subAgents.running > 0 || inspectorData.subAgents.completed > 0}
+							<div class="text-xs text-gray-500 mb-2">
+								Sub-agents: <span class="text-emerald-400">{inspectorData.subAgents.running} running</span> · {inspectorData.subAgents.completed} completed
+							</div>
+						{/if}
+					</div>
+
+					<!-- Active sessions with context bars -->
+					{#if inspectorData.sessions.list.length > 0}
+						<div>
+							<div class="text-[10px] uppercase text-gray-500 mb-2">Recent Sessions</div>
+							<div class="space-y-2">
+								{#each inspectorData.sessions.list as session}
+									{@const pct = session.contextMax > 0 ? Math.min(100, (session.tokens / session.contextMax) * 100) : 0}
+									{@const barColor = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-blue-500'}
+									<div class="bg-gray-800 rounded-lg p-2.5">
+										<div class="flex items-center justify-between mb-1">
+											<div class="text-xs text-gray-300 truncate max-w-[240px]" title={session.key}>
+												{session.key.split(':').slice(-1)[0] || session.key}
+											</div>
+											<div class="text-[10px] text-gray-500">{session.channel}</div>
+										</div>
+										<div class="flex items-center gap-2">
+											<div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+												<div class="{barColor} h-full rounded-full transition-all" style="width: {pct}%"></div>
+											</div>
+											<div class="text-[10px] text-gray-400 whitespace-nowrap">
+												{formatTokens(session.tokens)} / {formatTokens(session.contextMax)}
+											</div>
+										</div>
+										{#if session.model}
+											<div class="text-[10px] text-gray-600 mt-1">{session.model}</div>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				{:else}
+					<div class="flex flex-col items-center justify-center py-12 text-gray-600">
+						<svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+						<div class="text-sm">No telemetry</div>
+						<div class="text-xs text-gray-700 mt-1">This agent hasn't reported yet</div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	<!-- Members sidebar -->
 	<div class="hidden w-48 border-l border-gray-800 p-3 md:block">
 		<h2 class="mb-2 text-xs font-semibold uppercase text-gray-500">Members ({sortedMembers.length})</h2>
 		{#each sortedMembers as agent}
-			<div class="flex items-center gap-2 py-1">
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-800/50 rounded px-1 -mx-1 transition-colors"
+				onclick={() => openInspector(agent.name)}>
 				<span class="inline-block h-2 w-2 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
 				<span class="text-sm {agent.online ? (agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400') : 'text-gray-500'}">{agent.name}</span>
+				{#if currentTelemetry.has(agent.name)}
+					<span class="ml-auto text-[9px] text-gray-600">📊</span>
+				{/if}
 			</div>
 		{:else}
 			<div class="text-xs text-gray-600">No members</div>

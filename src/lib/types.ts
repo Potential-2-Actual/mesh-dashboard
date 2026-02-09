@@ -20,3 +20,30 @@ export interface MemberInfo {
 	type: 'human' | 'ai';
 	joinedAt: number;
 }
+
+export interface TelemetrySessionInfo {
+	key: string;
+	kind: string;
+	channel: string;
+	tokens: number;
+	contextMax: number;
+	updatedAt: number;
+	model?: string;
+}
+
+export interface TelemetryPayload {
+	agent: string;
+	version: string;
+	model: string;
+	uptime: number;
+	sessions: {
+		total: number;
+		active: number;
+		list: TelemetrySessionInfo[];
+	};
+	subAgents: {
+		running: number;
+		completed: number;
+	};
+	ts: number;
+}
