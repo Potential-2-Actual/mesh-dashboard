@@ -142,6 +142,6 @@
 		onclick={handleClick}
 		{placeholder}
 		{disabled}
-		class={className}
+		class="w-full {className}"
 	/>
 </div>
