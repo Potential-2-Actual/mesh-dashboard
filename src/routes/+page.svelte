@@ -369,24 +369,34 @@
 						<span class="inline-block h-1.5 w-1.5 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
 						<span class="{agent.type === 'human' ? 'text-emerald-500' : 'text-blue-500'}">{agent.name}</span>
 						{#if agent.activeCount > 0}
-							<span class="ml-auto text-[9px] font-normal normal-case text-gray-600">{agent.activeCount}</span>
+							<span class="ml-auto text-[9px] font-normal normal-case text-gray-600" title="{agent.activeCount} active session{agent.activeCount !== 1 ? 's' : ''}">{agent.activeCount} active</span>
 						{/if}
 					</div>
-					{#if !collapsedSections[agent.name] && agent.sessions.length > 0}
+					{#if !collapsedSections[agent.name]}
 						<div class="ml-2">
-							{#each agent.sessions as session}
+							<!-- Telemetry item -->
+							{#if currentTelemetry.has(agent.name)}
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-400 hover:bg-gray-800/50 hover:text-gray-300 cursor-pointer transition-colors truncate"
-									title={session.key}
+								<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-400 hover:bg-gray-800/50 hover:text-gray-300 cursor-pointer transition-colors"
 									onclick={() => openInspector(agent.name)}>
-									<span class="text-gray-600 text-[10px]">○</span>
-									<span class="truncate">{shortSessionLabel(session.key)}</span>
+									<span class="text-[10px]">📊</span>
+									<span>Telemetry</span>
 								</div>
-							{/each}
+							{/if}
+							<!-- Session list -->
+							{#if agent.sessions.length > 0}
+								{#each agent.sessions as session}
+									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-500 truncate"
+										title={session.key}>
+										<span class="text-gray-600 text-[10px]">○</span>
+										<span class="truncate">{shortSessionLabel(session.key)}</span>
+									</div>
+								{/each}
+							{:else}
+								<div class="px-2 py-0.5 text-[10px] text-gray-700 italic">no sessions</div>
+							{/if}
 						</div>
-					{:else if !collapsedSections[agent.name] && agent.sessions.length === 0}
-						<div class="ml-4 px-2 py-0.5 text-[10px] text-gray-700 italic">no sessions</div>
 					{/if}
 				</div>
 			{/each}
