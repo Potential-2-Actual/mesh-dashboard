@@ -37,6 +37,65 @@
 	// Inspector state
 	let inspectorAgent = $state<string | null>(null);
 
+	// Sidebar collapse state
+	let collapsedSections: Record<string, boolean> = $state({});
+
+	function toggleSection(key: string) {
+		collapsedSections[key] = !collapsedSections[key];
+	}
+
+	function shortSessionLabel(key: string): string {
+		// agent:main:nats:group:mesh.channel.general → mesh.channel.general
+		// agent:main:telegram:dm:8193672753 → telegram:dm
+		// agent:main:main → main
+		const parts = key.split(':');
+		// Strip leading "agent:<name>:" prefix
+		const stripped = parts.length > 2 ? parts.slice(2) : parts;
+		const joined = stripped.join(':');
+		if (joined === 'main') return 'main';
+		// For nats:group:mesh.channel.X → mesh.channel.X
+		if (stripped[0] === 'nats' && stripped.length >= 3) return stripped.slice(2).join(':');
+		// For telegram:dm:longid → telegram:dm
+		if (stripped.length >= 2) {
+			const label = stripped.slice(0, 2).join(':');
+			return label.length > 28 ? label.slice(0, 28) + '…' : label;
+		}
+		return joined.length > 28 ? joined.slice(0, 28) + '…' : joined;
+	}
+
+	// Agent entries from telemetry, sorted: humans first, then alpha
+	let sidebarAgents = $derived.by(() => {
+		const agents: Array<{ name: string; type: 'human' | 'ai'; online: boolean; sessions: TelemetryPayload['sessions']['list']; activeCount: number }> = [];
+		for (const [name, telem] of currentTelemetry) {
+			const member = currentMembers.get(name);
+			agents.push({
+				name,
+				type: member?.type ?? 'ai',
+				online: currentPresence.has(name),
+				sessions: telem.sessions.list,
+				activeCount: telem.sessions.active
+			});
+		}
+		// Also add members with no telemetry
+		for (const [name, member] of currentMembers) {
+			if (!currentTelemetry.has(name)) {
+				agents.push({
+					name,
+					type: member.type,
+					online: currentPresence.has(name),
+					sessions: [],
+					activeCount: 0
+				});
+			}
+		}
+		agents.sort((a, b) => {
+			if (a.type !== b.type) return a.type === 'human' ? -1 : 1;
+			if (a.online !== b.online) return a.online ? -1 : 1;
+			return a.name.localeCompare(b.name);
+		});
+		return agents;
+	});
+
 	const unsubMsgs = messages.subscribe((v) => { currentMessages = v; scrollToBottom(); });
 	const unsubPresence = presence.subscribe((v) => { currentPresence = v; });
 	const unsubMembers = members.subscribe((v) => { currentMembers = v; });
@@ -276,12 +335,75 @@
 </script>
 
 <div class="flex h-[calc(100vh-49px)]">
+	<!-- Left navigation sidebar -->
+	<div class="hidden md:flex flex-col w-[220px] min-w-[220px] bg-gray-950 border-r border-gray-800 overflow-y-auto">
+		<div class="flex-1 py-2">
+			<!-- CHANNELS section -->
+			<div class="px-2 mb-1">
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase text-gray-500 cursor-pointer hover:text-gray-400 select-none"
+					onclick={() => toggleSection('channels')}>
+					<svg class="w-3 h-3 transition-transform {collapsedSections['channels'] ? '-rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+					<span>📡 Channels</span>
+				</div>
+				{#if !collapsedSections['channels']}
+					<div class="ml-2">
+						<div class="flex items-center gap-1.5 px-2 py-1 rounded text-sm bg-gray-800/60 text-gray-100 font-medium">
+							<span class="text-gray-500">#</span>
+							<span>general</span>
+						</div>
+					</div>
+				{/if}
+			</div>
+
+			<!-- Agent sections from telemetry -->
+			{#each sidebarAgents as agent}
+				<div class="px-2 mb-0.5">
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase text-gray-500 cursor-pointer hover:text-gray-400 select-none"
+						onclick={() => toggleSection(agent.name)}>
+						<svg class="w-3 h-3 transition-transform {collapsedSections[agent.name] ? '-rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+						<span>{agent.type === 'human' ? '👤' : '🤖'}</span>
+						<span class="inline-block h-1.5 w-1.5 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
+						<span class="{agent.type === 'human' ? 'text-emerald-500' : 'text-blue-500'}">{agent.name}</span>
+						{#if agent.activeCount > 0}
+							<span class="ml-auto text-[9px] font-normal normal-case text-gray-600">{agent.activeCount}</span>
+						{/if}
+					</div>
+					{#if !collapsedSections[agent.name] && agent.sessions.length > 0}
+						<div class="ml-2">
+							{#each agent.sessions as session}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-400 hover:bg-gray-800/50 hover:text-gray-300 cursor-pointer transition-colors truncate"
+									title={session.key}
+									onclick={() => openInspector(agent.name)}>
+									<span class="text-gray-600 text-[10px]">○</span>
+									<span class="truncate">{shortSessionLabel(session.key)}</span>
+								</div>
+							{/each}
+						</div>
+					{:else if !collapsedSections[agent.name] && agent.sessions.length === 0}
+						<div class="ml-4 px-2 py-0.5 text-[10px] text-gray-700 italic">no sessions</div>
+					{/if}
+				</div>
+			{/each}
+		</div>
+
+		<!-- Bottom: connection status -->
+		<div class="border-t border-gray-800 px-3 py-2 flex items-center gap-2 text-xs">
+			<span class="inline-block h-2 w-2 rounded-full {currentStatus === 'connected' ? 'bg-emerald-400' : currentStatus === 'connecting' ? 'bg-yellow-400' : 'bg-red-400'}"></span>
+			<span class="text-gray-500">{currentStatus}</span>
+		</div>
+	</div>
+
 	<!-- Main chat area -->
 	<div class="flex flex-1 flex-col">
-		<!-- Connection status -->
+		<!-- Channel header -->
 		<div class="flex items-center gap-2 border-b border-gray-800 px-4 py-1.5 text-xs">
-			<span class="inline-block h-2 w-2 rounded-full {currentStatus === 'connected' ? 'bg-emerald-400' : currentStatus === 'connecting' ? 'bg-yellow-400' : 'bg-red-400'}"></span>
-			<span class="text-gray-400">{currentStatus}</span>
+			<span class="text-gray-400 font-medium"># general</span>
 			<span class="text-gray-600">· mesh.channel.general</span>
 			<button onclick={toggleSearch} class="ml-auto text-gray-500 hover:text-gray-300 text-xs" title="Search (Ctrl+K)">
 				<svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
@@ -485,22 +607,5 @@
 		</div>
 	{/if}
 
-	<!-- Members sidebar -->
-	<div class="hidden w-48 border-l border-gray-800 p-3 md:block">
-		<h2 class="mb-2 text-xs font-semibold uppercase text-gray-500">Members ({sortedMembers.length})</h2>
-		{#each sortedMembers as agent}
-			<!-- svelte-ignore a11y_click_events_have_key_events -->
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="flex items-center gap-2 py-1 cursor-pointer hover:bg-gray-800/50 rounded px-1 -mx-1 transition-colors"
-				onclick={() => openInspector(agent.name)}>
-				<span class="inline-block h-2 w-2 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
-				<span class="text-sm {agent.online ? (agent.type === 'human' ? 'text-emerald-400' : 'text-blue-400') : 'text-gray-500'}">{agent.name}</span>
-				{#if currentTelemetry.has(agent.name)}
-					<span class="ml-auto text-[9px] text-gray-600">📊</span>
-				{/if}
-			</div>
-		{:else}
-			<div class="text-xs text-gray-600">No members</div>
-		{/each}
-	</div>
+
 </div>
