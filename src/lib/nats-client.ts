@@ -152,6 +152,18 @@ export async function requestSessionHistory(
 	return JSON.parse(new TextDecoder().decode(response.data));
 }
 
+export async function sendSessionMessage(
+	agentName: string,
+	sessionKey: string,
+	message: string
+): Promise<{ reply?: string; error?: string; success: boolean }> {
+	if (!nc) throw new Error('NATS not connected');
+	const subject = `mesh.session.${agentName}.send`;
+	const payload = JSON.stringify({ sessionKey, message });
+	const response = await nc.request(subject, new TextEncoder().encode(payload), { timeout: 120000 });
+	return JSON.parse(new TextDecoder().decode(response.data));
+}
+
 export async function publishMessage(text: string): Promise<void> {
 	const res = await fetch('/api/send', {
 		method: 'POST',

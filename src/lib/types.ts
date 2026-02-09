@@ -45,6 +45,13 @@ export interface SessionHistoryResponse {
 	total: number;
 }
 
+export interface SessionSendResponse {
+	sessionKey: string;
+	reply?: string;
+	error?: string;
+	success: boolean;
+}
+
 export interface TelemetryPayload {
 	agent: string;
 	version: string;

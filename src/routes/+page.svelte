@@ -2,8 +2,8 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { messages, presence, connectionStatus, members, telemetry } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
-	import { connectNats, publishMessage, disconnectNats, requestSessionHistory } from '$lib/nats-client.js';
-	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse } from '$lib/types.js';
+	import { connectNats, publishMessage, disconnectNats, requestSessionHistory, sendSessionMessage } from '$lib/nats-client.js';
+	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse, SessionSendResponse } from '$lib/types.js';
 	import { page } from '$app/stores';
 
 	// Derive presence name from user (same sanitization as /api/send)
@@ -43,6 +43,9 @@
 	let sessionLoading = $state(false);
 	let sessionError = $state<string | null>(null);
 	let expandedThinking = $state<Set<string>>(new Set());
+	let sessionMessageInput = $state('');
+	let sessionSending = $state(false);
+	let sessionSendError = $state<string | null>(null);
 
 	// Sidebar collapse state
 	let collapsedSections: Record<string, boolean> = $state({});
@@ -302,6 +305,80 @@
 		await tick();
 		const el = document.getElementById('session-messages');
 		if (el) el.scrollTop = el.scrollHeight;
+	}
+
+	async function sendToSession() {
+		if (!viewingSession || !sessionMessageInput.trim() || sessionSending) return;
+		const text = sessionMessageInput.trim();
+		sessionSending = true;
+		sessionSendError = null;
+		sessionMessageInput = '';
+
+		// Optimistically append user message to viewer
+		if (sessionHistory) {
+			sessionHistory = {
+				...sessionHistory,
+				messages: [
+					...sessionHistory.messages,
+					{
+						id: `pending-user-${Date.now()}`,
+						role: 'user',
+						content: [{ type: 'text', text }],
+						timestamp: new Date().toISOString(),
+					},
+				],
+				total: sessionHistory.total + 1,
+			};
+		}
+
+		await tick();
+		const el = document.getElementById('session-messages');
+		if (el) el.scrollTop = el.scrollHeight;
+
+		try {
+			const result = await sendSessionMessage(viewingSession.agentName, viewingSession.sessionKey, text);
+			if (result.success && result.reply) {
+				// Append agent reply optimistically
+				if (sessionHistory) {
+					sessionHistory = {
+						...sessionHistory,
+						messages: [
+							...sessionHistory.messages,
+							{
+								id: `pending-reply-${Date.now()}`,
+								role: 'assistant',
+								content: [{ type: 'text', text: result.reply }],
+								timestamp: new Date().toISOString(),
+							},
+						],
+						total: sessionHistory.total + 1,
+					};
+				}
+			} else if (!result.success) {
+				sessionSendError = result.error ?? 'Unknown error';
+			}
+
+			// Re-fetch full history for consistency
+			try {
+				const fresh = await requestSessionHistory(viewingSession.agentName, viewingSession.sessionKey);
+				if (!('error' in fresh)) {
+					sessionHistory = fresh;
+				}
+			} catch { /* keep optimistic state */ }
+		} catch (err) {
+			sessionSendError = `${err}`;
+		}
+		sessionSending = false;
+
+		await tick();
+		if (el) el.scrollTop = el.scrollHeight;
+	}
+
+	function handleSessionKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			sendToSession();
+		}
 	}
 
 	function closeSessionViewer() {
@@ -758,7 +835,40 @@
 				{:else}
 					<div class="flex items-center justify-center py-12 text-gray-600 text-sm">No messages</div>
 				{/if}
+
+				{#if sessionSending}
+					<div class="rounded-lg bg-gray-800/40 p-3 max-w-[90%] border-l-2 border-blue-500/20 animate-pulse">
+						<div class="text-xs text-blue-400/60">Agent thinking…</div>
+					</div>
+				{/if}
 			</div>
+
+			<!-- Session send input -->
+			{#if sessionHistory && !sessionError}
+				<div class="border-t border-gray-800 p-3">
+					{#if sessionSendError}
+						<div class="text-xs text-red-400 mb-2 px-1">{sessionSendError}</div>
+					{/if}
+					<div class="flex gap-2">
+						<input
+							type="text"
+							bind:value={sessionMessageInput}
+							onkeydown={handleSessionKeydown}
+							placeholder="Send a message to this session…"
+							disabled={sessionSending || currentStatus !== 'connected'}
+							class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-blue-500 disabled:opacity-40"
+						/>
+						<button
+							onclick={sendToSession}
+							disabled={sessionSending || !sessionMessageInput.trim() || currentStatus !== 'connected'}
+							class="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+							title="This triggers an agent turn and may incur API costs"
+						>
+							{sessionSending ? 'Sending…' : 'Send (triggers agent turn)'}
+						</button>
+					</div>
+				</div>
+			{/if}
 		</div>
 	{/if}
 
