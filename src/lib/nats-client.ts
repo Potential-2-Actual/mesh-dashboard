@@ -1,6 +1,6 @@
 import { connect, type NatsConnection, type Subscription, nkeyAuthenticator } from 'nats.ws';
-import { messages, presence, connectionStatus, systemEvents } from './stores.js';
-import type { MessageEnvelope, PresenceInfo } from './types.js';
+import { messages, presence, connectionStatus, systemEvents, telemetry } from './stores.js';
+import type { MessageEnvelope, PresenceInfo, TelemetryPayload } from './types.js';
 import { get } from 'svelte/store';
 
 let nc: NatsConnection | null = null;
@@ -41,7 +41,6 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 					connectionStatus.set('disconnected');
 				} else if (s.type === 'reconnect') {
 					connectionStatus.set('connected');
-					// Re-fetch seed if TTL expired
 					if (Date.now() > seedExpiresAt) {
 						try {
 							await fetchSeed();
@@ -103,6 +102,22 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 			}
 		})();
 
+		// Subscribe to telemetry
+		const telemetrySub = nc.subscribe('mesh.telemetry.>');
+		subs.push(telemetrySub);
+		(async () => {
+			for await (const msg of telemetrySub) {
+				try {
+					const data: TelemetryPayload = JSON.parse(new TextDecoder().decode(msg.data));
+					telemetry.update((t) => {
+						const next = new Map(t);
+						next.set(data.agent, data);
+						return next;
+					});
+				} catch { /* ignore */ }
+			}
+		})();
+
 		// Publish presence heartbeat for dashboard user
 		if (userName) {
 			const publishPresence = () => {
@@ -114,8 +129,8 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 					})));
 				}
 			};
-			publishPresence(); // immediately
-			presenceInterval = setInterval(publishPresence, 30000); // every 30s
+			publishPresence();
+			presenceInterval = setInterval(publishPresence, 30000);
 		}
 
 	} catch (err) {
@@ -126,7 +141,6 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 }
 
 export async function publishMessage(text: string): Promise<void> {
-	// Publish via server-side API (hybrid model: browser subscribes, server publishes)
 	const res = await fetch('/api/send', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
