@@ -101,12 +101,12 @@
 			const parts: string[] = [];
 			for (const child of children) {
 				if (child.getType() === 'code') {
-					parts.push('```\n' + child.getTextContent() + '\n```');
+					parts.push('\n```\n' + child.getTextContent() + '\n```\n');
 				} else {
 					parts.push(child.getTextContent());
 				}
 			}
-			text = parts.join('\n');
+			text = parts.join('\n').trim();
 		});
 		return text;
 	}
