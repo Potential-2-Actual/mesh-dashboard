@@ -101,12 +101,12 @@
 			const parts: string[] = [];
 			for (const child of children) {
 				if (child.getType() === 'code') {
-					parts.push('```\n' + child.getTextContent() + '\n```');
+					parts.push('\n```\n' + child.getTextContent() + '\n```\n');
 				} else {
 					parts.push(child.getTextContent());
 				}
 			}
-			text = parts.join('\n');
+			text = parts.join('\n').trim();
 		});
 		return text;
 	}
@@ -276,7 +276,7 @@
 			editor.registerNodeTransform(TextNode, (node) => {
 				// Don't transform text nodes inside code blocks
 				const parent = node.getParent();
-				if (parent && parent.getType() === 'code') return;
+				if (!parent || parent.getType() === 'code') return;
 
 				const text = node.getTextContent();
 				const idx = text.indexOf('```');
@@ -284,45 +284,40 @@
 
 				const before = text.slice(0, idx);
 				const after = text.slice(idx + 3);
+				const parentPara = parent;
 
-				// Create the code block node
+				// Build nodes to insert after the current paragraph
 				const codeNode = createCodeNode();
+				const nodesToInsert: any[] = [];
 
-				// If there's text before the ```, keep it in the current node
 				if (before) {
+					// Keep text before ``` in original paragraph
 					node.setTextContent(before);
-					// Insert code node after the text node's parent paragraph
-					const parentNode = node.getParent();
-					if (parentNode) {
-						const newPara = createParagraphNode();
-						newPara.append(codeNode);
-						parentNode.insertAfter(newPara);
-						// If there's text after ```, add it in a new paragraph after the code
-						if (after.trim()) {
-							const afterPara = createParagraphNode();
-							afterPara.append(createTextNode(after));
-							newPara.insertAfter(afterPara);
-						}
-					}
 				} else {
-					// ``` was at the start — replace the text node with code block
-					const parentNode = node.getParent();
-					if (parentNode) {
-						const newPara = createParagraphNode();
-						newPara.append(codeNode);
-						parentNode.insertAfter(newPara);
-						// If there's text after ```, add it in a new paragraph
-						if (after.trim()) {
-							const afterPara = createParagraphNode();
-							afterPara.append(createTextNode(after));
-							newPara.insertAfter(afterPara);
-						}
-						// Remove the original text node if it's now empty
-						node.remove();
-						if (parentNode.getChildrenSize() === 0) {
-							parentNode.remove();
-						}
-					}
+					// Nothing before — remove the text node
+					node.remove();
+				}
+
+				// Add the code block
+				nodesToInsert.push(codeNode);
+
+				// Add text after ``` in a new paragraph
+				if (after.trim()) {
+					const afterPara = createParagraphNode();
+					afterPara.append(createTextNode(after));
+					nodesToInsert.push(afterPara);
+				}
+
+				// Insert all nodes after the parent paragraph
+				let insertAfter = parentPara;
+				for (const n of nodesToInsert) {
+					insertAfter.insertAfter(n);
+					insertAfter = n;
+				}
+
+				// Clean up empty parent paragraph
+				if (parentPara.getChildrenSize() === 0) {
+					parentPara.remove();
 				}
 
 				// Focus inside the code block
@@ -342,8 +337,7 @@
 						return true; // prevent default
 					}
 
-					const inCode = isInCodeBlock();
-					const wantsNewline = event.shiftKey || event.altKey || event.ctrlKey || inCode;
+					const wantsNewline = event.shiftKey || event.altKey || event.ctrlKey;
 
 					if (wantsNewline) {
 						// Let Lexical handle newline insertion naturally
