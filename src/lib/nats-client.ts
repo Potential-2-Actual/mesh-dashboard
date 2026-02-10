@@ -164,7 +164,94 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 			}
 		})();
 
-		// Subscribe to telemetry
+		// Load telemetry from localStorage cache for instant render
+		try {
+			const cached = localStorage.getItem('mesh-telemetry-cache');
+			if (cached) {
+				const entries: Record<string, TelemetryPayload> = JSON.parse(cached);
+				telemetry.update((t) => {
+					const next = new Map(t);
+					for (const [k, v] of Object.entries(entries)) {
+						next.set(k, v);
+					}
+					return next;
+				});
+			}
+		} catch { /* ignore */ }
+
+		// Load telemetry from KV bucket (instant dashboard loading)
+		(async () => {
+			try {
+				const js = nc!.jetstream();
+				const kv = await js.views.kv('MESH-TELEMETRY');
+
+				// Read all entries - collect keys first, then fetch
+				const keys: string[] = [];
+				for await (const key of await kv.keys()) {
+					keys.push(key);
+				}
+				for (const key of keys) {
+					const entry = await kv.get(key);
+					if (entry?.value) {
+						const raw = JSON.parse(new TextDecoder().decode(entry.value));
+						// KV contains lean summary — convert to TelemetryPayload shape for nav
+						const data: TelemetryPayload = raw.sessions ? raw : {
+							agent: raw.agent,
+							version: raw.version,
+							model: raw.model,
+							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
+							subAgents: { running: 0, completed: 0 },
+							ts: raw.ts,
+						};
+						telemetry.update((t) => {
+							const next = new Map(t);
+							next.set(data.agent, data);
+							return next;
+						});
+					}
+				}
+
+				// Cache to localStorage
+				telemetry.subscribe((t) => {
+					try {
+						const obj: Record<string, TelemetryPayload> = {};
+						t.forEach((v, k) => { obj[k] = v; });
+						localStorage.setItem('mesh-telemetry-cache', JSON.stringify(obj));
+					} catch { /* ignore */ }
+				});
+
+				// Watch for live KV updates
+				const watch = await kv.watch();
+				for await (const entry of watch) {
+					if (entry.operation === 'DEL' || entry.operation === 'PURGE') {
+						telemetry.update((t) => {
+							const next = new Map(t);
+							next.delete(entry.key);
+							return next;
+						});
+					} else if (entry.value) {
+						const raw = JSON.parse(new TextDecoder().decode(entry.value));
+						const data: TelemetryPayload = raw.sessions ? raw : {
+							agent: raw.agent,
+							version: raw.version,
+							model: raw.model,
+							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
+							subAgents: { running: 0, completed: 0 },
+							ts: raw.ts,
+						};
+						telemetry.update((t) => {
+							const next = new Map(t);
+							next.set(data.agent, data);
+							return next;
+						});
+					}
+				}
+			} catch (err) {
+				console.warn('KV telemetry load failed (falling back to pub/sub):', err);
+			}
+		})();
+
+		// Subscribe to telemetry (backward compat with pub/sub)
 		const telemetrySub = nc.subscribe('mesh.telemetry.>');
 		subs.push(telemetrySub);
 		(async () => {
