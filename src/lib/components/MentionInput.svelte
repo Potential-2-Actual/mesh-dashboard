@@ -134,18 +134,23 @@
 		}
 
 		if (e.key === 'Enter') {
-			if (e.altKey || e.ctrlKey) {
-				// Opt+Enter (Mac) / Ctrl+Enter (PC): insert newline
-				requestAnimationFrame(autoResize);
-				return;
-			}
 			const cursorPos = inputEl?.selectionStart ?? 0;
-			if (isInCodeBlock(value, cursorPos)) {
-				// Inside code block: let default behavior insert newline
-				requestAnimationFrame(autoResize);
+			const wantsNewline = e.shiftKey || e.altKey || e.ctrlKey || isInCodeBlock(value, cursorPos);
+
+			if (wantsNewline) {
+				// Explicitly insert newline (native behavior unreliable with bind:value)
+				e.preventDefault();
+				const before = value.slice(0, cursorPos);
+				const after = value.slice(inputEl?.selectionEnd ?? cursorPos);
+				value = before + '\n' + after;
+				requestAnimationFrame(() => {
+					const newPos = cursorPos + 1;
+					inputEl?.setSelectionRange(newPos, newPos);
+					autoResize();
+				});
 				return;
 			}
-			// Normal Enter: send (prevent newline, call parent)
+			// Normal Enter: send
 			e.preventDefault();
 			parentKeydown?.(e);
 			requestAnimationFrame(autoResize);
