@@ -11,7 +11,7 @@ import {
 	TextNode
 } from 'lexical';
 import { CodeNode, CodeHighlightNode, $createCodeNode, $isCodeNode } from '@lexical/code';
-import { registerPlainText } from '@lexical/plain-text';
+import { registerRichText } from '@lexical/rich-text';
 
 export {
 	_createEditor as createEditor,
@@ -28,5 +28,5 @@ export {
 	CodeHighlightNode,
 	$createCodeNode as createCodeNode,
 	$isCodeNode as isCodeNode,
-	registerPlainText
+	registerRichText
 };

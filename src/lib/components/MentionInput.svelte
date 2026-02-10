@@ -16,7 +16,7 @@
 		CodeHighlightNode,
 		createCodeNode,
 		isCodeNode,
-		registerPlainText
+		registerRichText
 	} from './lexical-helpers.js';
 
 	let {
@@ -254,13 +254,23 @@
 		editor.setRootElement(editorDiv);
 
 		// Register plain text plugin
-		cleanups.push(registerPlainText(editor));
+		cleanups.push(registerRichText(editor));
 
 		// Listen for text changes
 		cleanups.push(
 			editor.registerUpdateListener(({ editorState, dirtyElements, dirtyLeaves }) => {
 				editorState.read(() => {
-					const text = getRoot().getTextContent();
+					const root = getRoot();
+					const children = root.getChildren();
+					const parts: string[] = [];
+					for (const child of children) {
+						if (child.getType() === 'code') {
+							parts.push('\n```\n' + child.getTextContent() + '\n```\n');
+						} else {
+							parts.push(child.getTextContent());
+						}
+					}
+					const text = parts.join('\n').trim();
 					internalUpdate = true;
 					value = text;
 					internalUpdate = false;
@@ -315,9 +325,17 @@
 					insertAfter = n;
 				}
 
-				// Clean up empty parent paragraph
+				// Clean up empty parent paragraph AFTER inserting new nodes
 				if (parentPara.getChildrenSize() === 0) {
-					parentPara.remove();
+					// Ensure root won't be empty before removing
+					const root = getRoot();
+					if (root.getChildrenSize() > 1) {
+						parentPara.remove();
+					} else {
+						// Replace empty paragraph with the code node by removing paragraph
+						// (code node is already inserted after it)
+						parentPara.remove();
+					}
 				}
 
 				// Focus inside the code block
