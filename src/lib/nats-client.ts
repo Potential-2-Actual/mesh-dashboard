@@ -193,7 +193,16 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 				for (const key of keys) {
 					const entry = await kv.get(key);
 					if (entry?.value) {
-						const data: TelemetryPayload = JSON.parse(new TextDecoder().decode(entry.value));
+						const raw = JSON.parse(new TextDecoder().decode(entry.value));
+						// KV contains lean summary — convert to TelemetryPayload shape for nav
+						const data: TelemetryPayload = raw.sessions ? raw : {
+							agent: raw.agent,
+							version: raw.version,
+							model: raw.model,
+							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
+							subAgents: { running: 0, completed: 0 },
+							ts: raw.ts,
+						};
 						telemetry.update((t) => {
 							const next = new Map(t);
 							next.set(data.agent, data);
@@ -221,7 +230,15 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 							return next;
 						});
 					} else if (entry.value) {
-						const data: TelemetryPayload = JSON.parse(new TextDecoder().decode(entry.value));
+						const raw = JSON.parse(new TextDecoder().decode(entry.value));
+						const data: TelemetryPayload = raw.sessions ? raw : {
+							agent: raw.agent,
+							version: raw.version,
+							model: raw.model,
+							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
+							subAgents: { running: 0, completed: 0 },
+							ts: raw.ts,
+						};
 						telemetry.update((t) => {
 							const next = new Map(t);
 							next.set(data.agent, data);
