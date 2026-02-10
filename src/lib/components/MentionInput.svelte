@@ -1,5 +1,21 @@
 <script lang="ts">
 	import type { PresenceInfo, MemberInfo } from '$lib/types.js';
+	import { onMount, onDestroy } from 'svelte';
+	import {
+		createEditor,
+		getRoot,
+		getSelection,
+		isRangeSelection,
+		createParagraphNode,
+		createTextNode,
+		KEY_ENTER_COMMAND,
+		COMMAND_PRIORITY_HIGH,
+		isTextNode,
+		TextNode,
+		CodeNode,
+		CodeHighlightNode,
+		registerPlainText
+	} from './lexical-helpers.js';
 
 	let {
 		value = $bindable(''),
@@ -19,12 +35,15 @@
 		class?: string;
 	} = $props();
 
-	let inputEl: HTMLTextAreaElement;
-	let inCodeBlock = $state(false);
+	let editorDiv: HTMLDivElement;
+	let wrapperDiv: HTMLDivElement;
+	let editor: ReturnType<typeof createEditor> | null = null;
 	let showDropdown = $state(false);
 	let selectedIndex = $state(0);
 	let mentionStart = $state(-1);
 	let query = $state('');
+	let internalUpdate = false;
+	let cleanups: (() => void)[] = [];
 
 	let suggestions = $derived.by(() => {
 		if (!showDropdown) return [];
@@ -60,26 +79,102 @@
 		}
 	});
 
-	function isInCodeBlock(text: string, cursorPos: number): boolean {
-		const beforeCursor = text.substring(0, cursorPos);
+	// Watch for external value clears (e.g. after send)
+	$effect(() => {
+		if (value === '' && editor && !internalUpdate) {
+			editor.update(() => {
+				const root = getRoot();
+				root.clear();
+				root.append(createParagraphNode());
+			});
+		}
+	});
+
+	function getPlainText(): string {
+		let text = '';
+		if (!editor) return text;
+		editor.getEditorState().read(() => {
+			text = getRoot().getTextContent();
+		});
+		return text;
+	}
+
+	function isInCodeBlock(): boolean {
+		const text = getPlainText();
+		// Get cursor offset from the selection
+		let cursorOffset = text.length;
+		if (editor) {
+			editor.getEditorState().read(() => {
+				const sel = getSelection();
+				if (isRangeSelection(sel)) {
+					// Approximate: count text up to anchor
+					const anchor = sel.anchor;
+					const node = anchor.getNode();
+					// Walk tree to compute offset
+					let offset = 0;
+					const root = getRoot();
+					const allText = root.getTextContent();
+					// Use a simpler heuristic: check if anchor node is inside a CodeNode
+					let parent = node.getParent();
+					while (parent) {
+						if (parent.getType() === 'code') {
+							cursorOffset = -1; // signal: in code
+							return;
+						}
+						parent = parent.getParent();
+					}
+					// Fallback: check backtick pairs in plain text
+					cursorOffset = anchor.offset;
+					// Compute total offset by walking siblings
+					const prevSiblings = node.getPreviousSiblings();
+					for (const sib of prevSiblings) {
+						offset += sib.getTextContent().length;
+					}
+					// Walk up paragraphs
+					let pNode = node.getParent();
+					if (pNode) {
+						const pPrev = pNode.getPreviousSiblings();
+						for (const pp of pPrev) {
+							offset += pp.getTextContent().length + 1; // +1 for newline
+						}
+					}
+					cursorOffset = offset + anchor.offset;
+				}
+			});
+		}
+		if (cursorOffset === -1) return true; // inside CodeNode
+		const beforeCursor = text.substring(0, cursorOffset);
 		const matches = beforeCursor.match(/```/g);
 		return matches ? matches.length % 2 !== 0 : false;
 	}
 
-	function updateCodeBlockState() {
-		const cursor = inputEl?.selectionStart ?? 0;
-		inCodeBlock = isInCodeBlock(value, cursor);
-	}
-
-	function autoResize() {
-		if (!inputEl) return;
-		inputEl.style.height = 'auto';
-		inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
-	}
-
 	function checkForMention() {
-		const cursor = inputEl?.selectionStart ?? 0;
-		const text = value;
+		const text = getPlainText();
+		// Get cursor position from editor
+		let cursor = text.length;
+		if (editor) {
+			editor.getEditorState().read(() => {
+				const sel = getSelection();
+				if (isRangeSelection(sel)) {
+					const anchor = sel.anchor;
+					const node = anchor.getNode();
+					let offset = anchor.offset;
+					const prevSiblings = node.getPreviousSiblings();
+					for (const sib of prevSiblings) {
+						offset += sib.getTextContent().length;
+					}
+					let pNode = node.getParent();
+					if (pNode) {
+						const pPrev = pNode.getPreviousSiblings();
+						for (const pp of pPrev) {
+							offset += pp.getTextContent().length + 1;
+						}
+					}
+					cursor = offset;
+				}
+			});
+		}
+
 		let i = cursor - 1;
 		while (i >= 0) {
 			const ch = text[i];
@@ -97,26 +192,164 @@
 	}
 
 	function selectSuggestion(name: string) {
-		const cursor = inputEl?.selectionStart ?? 0;
-		const before = value.slice(0, mentionStart);
-		const after = value.slice(cursor);
-		value = `${before}@${name} ${after}`;
-		showDropdown = false;
-		const newPos = mentionStart + name.length + 2;
-		requestAnimationFrame(() => {
-			inputEl?.focus();
-			inputEl?.setSelectionRange(newPos, newPos);
-			autoResize();
+		if (!editor) return;
+		const text = getPlainText();
+		// Get cursor position
+		let cursor = text.length;
+		editor.getEditorState().read(() => {
+			const sel = getSelection();
+			if (isRangeSelection(sel)) {
+				const anchor = sel.anchor;
+				const node = anchor.getNode();
+				let offset = anchor.offset;
+				const prevSiblings = node.getPreviousSiblings();
+				for (const sib of prevSiblings) {
+					offset += sib.getTextContent().length;
+				}
+				let pNode = node.getParent();
+				if (pNode) {
+					const pPrev = pNode.getPreviousSiblings();
+					for (const pp of pPrev) {
+						offset += pp.getTextContent().length + 1;
+					}
+				}
+				cursor = offset;
+			}
 		});
+
+		const before = text.slice(0, mentionStart);
+		const after = text.slice(cursor);
+		const newText = `${before}@${name} ${after}`;
+
+		editor.update(() => {
+			const root = getRoot();
+			root.clear();
+			const para = createParagraphNode();
+			para.append(createTextNode(newText));
+			root.append(para);
+			// Set cursor after the mention
+			const textNode = para.getFirstChild();
+			if (isTextNode(textNode)) {
+				const newPos = mentionStart + name.length + 2;
+				textNode.select(newPos, newPos);
+			}
+		});
+
+		showDropdown = false;
 	}
 
-	function handleInput() {
-		checkForMention();
-		updateCodeBlockState();
-		autoResize();
+	function autoResize() {
+		if (!editorDiv) return;
+		// The contenteditable div auto-grows; we just cap it
+		const scrollH = editorDiv.scrollHeight;
+		if (scrollH > 200) {
+			editorDiv.style.maxHeight = '200px';
+			editorDiv.style.overflowY = 'auto';
+		} else {
+			editorDiv.style.maxHeight = '';
+			editorDiv.style.overflowY = '';
+		}
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
+	onMount(() => {
+		const theme = {
+			code: 'lexical-code',
+			paragraph: 'lexical-paragraph',
+			text: {}
+		};
+
+		editor = createEditor({
+			namespace: 'MentionInput',
+			theme,
+			nodes: [CodeNode, CodeHighlightNode],
+			onError: (error: Error) => {
+				console.error('Lexical error:', error);
+			}
+		});
+
+		editor.setRootElement(editorDiv);
+
+		// Register plain text plugin
+		cleanups.push(registerPlainText(editor));
+
+		// Listen for text changes
+		cleanups.push(
+			editor.registerUpdateListener(({ editorState, dirtyElements, dirtyLeaves }) => {
+				editorState.read(() => {
+					const text = getRoot().getTextContent();
+					internalUpdate = true;
+					value = text;
+					internalUpdate = false;
+				});
+				requestAnimationFrame(autoResize);
+				// Check mentions on every update
+				setTimeout(checkForMention, 0);
+			})
+		);
+
+		// Handle triple-backtick detection via text node transforms
+		cleanups.push(
+			editor.registerNodeTransform(TextNode, (node) => {
+				const text = node.getTextContent();
+				const idx = text.indexOf('```');
+				if (idx !== -1) {
+					// Split: before ```, code block placeholder, after ```
+					const before = text.slice(0, idx);
+					const after = text.slice(idx + 3);
+
+					// Check if there's a closing ``` in after
+					const closeIdx = after.indexOf('```');
+
+					if (closeIdx === -1) {
+						// No closing backticks - auto-insert them
+						// Replace with: before + ``` + ``` + after, cursor between
+						const newText = before + '```\n```' + after;
+						node.setTextContent(newText);
+						// Position cursor between the backtick pairs
+						const cursorPos = before.length + 4; // after first ``` + newline
+						node.select(cursorPos, cursorPos);
+					}
+					// If closing ``` exists, leave it alone (user typed content between them)
+				}
+			})
+		);
+
+		// Enter key handling
+		cleanups.push(
+			editor.registerCommand(
+				KEY_ENTER_COMMAND,
+				(event: KeyboardEvent | null) => {
+					if (!event) return false;
+
+					// If dropdown is showing, don't handle here (handled in wrapper keydown)
+					if (showDropdown && suggestions.length > 0) {
+						return true; // prevent default
+					}
+
+					const inCode = isInCodeBlock();
+					const wantsNewline = event.shiftKey || event.altKey || event.ctrlKey || inCode;
+
+					if (wantsNewline) {
+						// Let Lexical handle newline insertion naturally
+						return false;
+					}
+
+					// Normal Enter: send message
+					event.preventDefault();
+					parentKeydown?.(event);
+					return true;
+				},
+				COMMAND_PRIORITY_HIGH
+			)
+		);
+	});
+
+	onDestroy(() => {
+		cleanups.forEach((c) => c());
+		cleanups = [];
+	});
+
+	function handleWrapperKeydown(e: KeyboardEvent) {
 		if (showDropdown && suggestions.length > 0) {
 			if (e.key === 'ArrowDown') {
 				e.preventDefault();
@@ -140,47 +373,18 @@
 			}
 		}
 
-		if (e.key === 'Enter') {
-			const cursorPos = inputEl?.selectionStart ?? 0;
-			const wantsNewline = e.shiftKey || e.altKey || e.ctrlKey || isInCodeBlock(value, cursorPos);
-
-			if (wantsNewline) {
-				// Explicitly insert newline (native behavior unreliable with bind:value)
-				e.preventDefault();
-				const before = value.slice(0, cursorPos);
-				const after = value.slice(inputEl?.selectionEnd ?? cursorPos);
-				value = before + '\n' + after;
-				requestAnimationFrame(() => {
-					const newPos = cursorPos + 1;
-					inputEl?.setSelectionRange(newPos, newPos);
-					autoResize();
-				});
-				return;
-			}
-			// Normal Enter: send
-			e.preventDefault();
+		// Forward non-Enter keys to parent
+		if (e.key !== 'Enter') {
 			parentKeydown?.(e);
-			requestAnimationFrame(autoResize);
-			return;
 		}
-
-		parentKeydown?.(e);
-		requestAnimationFrame(updateCodeBlockState);
 	}
 
-	function handleClick(e: MouseEvent) {
-		setTimeout(() => { checkForMention(); updateCodeBlockState(); }, 0);
+	function handleClick() {
+		setTimeout(checkForMention, 0);
 	}
-
-	// Reset height when value is cleared (after send)
-	$effect(() => {
-		// Track value changes
-		value;
-		requestAnimationFrame(autoResize);
-	});
 </script>
 
-<div class="relative flex-1">
+<div class="relative flex-1" bind:this={wrapperDiv}>
 	{#if showDropdown && suggestions.length > 0}
 		<div class="absolute bottom-full left-0 mb-1 w-56 max-h-[216px] overflow-y-auto rounded-md border border-gray-700 bg-gray-800 shadow-lg z-50">
 			{#each suggestions as suggestion, i}
@@ -196,25 +400,39 @@
 			{/each}
 		</div>
 	{/if}
-	<textarea
-		bind:this={inputEl}
-		bind:value={value}
-		oninput={handleInput}
-		onkeydown={handleKeydown}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		bind:this={editorDiv}
+		class="w-full resize-none overflow-y-auto {className}"
+		style="max-height: 200px; min-height: 1.5rem; outline: none; white-space: pre-wrap; word-wrap: break-word;"
+		contenteditable={!disabled}
+		role="textbox"
+		tabindex="0"
+		aria-placeholder={placeholder}
+		aria-disabled={disabled}
+		data-placeholder={placeholder}
+		onkeydown={handleWrapperKeydown}
 		onclick={handleClick}
-		{placeholder}
-		{disabled}
-		rows="1"
-		class="w-full resize-none overflow-y-auto {className} {inCodeBlock ? 'code-block-active' : ''}"
-		style="max-height: 200px;"
-	></textarea>
+	></div>
 </div>
 
 <style>
-	textarea.code-block-active {
+	[data-placeholder]:empty::before {
+		content: attr(data-placeholder);
+		color: rgb(156 163 175);
+		pointer-events: none;
+	}
+	:global(.lexical-code) {
 		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-		background-color: rgba(0, 0, 0, 0.25);
-		border-left: 3px solid rgb(99, 102, 241);
-		transition: all 0.15s ease;
+		background-color: rgb(31 41 55 / 0.5);
+		border-radius: 0.25rem;
+		padding: 0.25rem 0.5rem;
+		font-size: 0.875rem;
+		line-height: 1.25rem;
+		display: block;
+		white-space: pre;
+	}
+	:global(.lexical-paragraph) {
+		margin: 0;
 	}
 </style>
