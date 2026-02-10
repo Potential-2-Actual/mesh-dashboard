@@ -19,7 +19,7 @@
 		class?: string;
 	} = $props();
 
-	let inputEl: HTMLInputElement;
+	let inputEl: HTMLTextAreaElement;
 	let showDropdown = $state(false);
 	let selectedIndex = $state(0);
 	let mentionStart = $state(-1);
@@ -27,7 +27,6 @@
 
 	let suggestions = $derived.by(() => {
 		if (!showDropdown) return [];
-		// Use members if available, fall back to presence
 		let names: { name: string; type: string; online: boolean }[] = [];
 		if (members && members.size > 0) {
 			for (const [, m] of members) {
@@ -39,7 +38,6 @@
 				names.push({ name: p.agent, type: p.type, online: true });
 			}
 		}
-		// Sort: online first, then alphabetical
 		names.sort((a, b) => {
 			if (a.online !== b.online) return a.online ? -1 : 1;
 			return a.name.localeCompare(b.name);
@@ -60,6 +58,18 @@
 			selectedIndex = Math.max(0, suggestions.length - 1);
 		}
 	});
+
+	function isInCodeBlock(text: string, cursorPos: number): boolean {
+		const beforeCursor = text.substring(0, cursorPos);
+		const matches = beforeCursor.match(/```/g);
+		return matches ? matches.length % 2 !== 0 : false;
+	}
+
+	function autoResize() {
+		if (!inputEl) return;
+		inputEl.style.height = 'auto';
+		inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + 'px';
+	}
 
 	function checkForMention() {
 		const cursor = inputEl?.selectionStart ?? 0;
@@ -90,11 +100,13 @@
 		requestAnimationFrame(() => {
 			inputEl?.focus();
 			inputEl?.setSelectionRange(newPos, newPos);
+			autoResize();
 		});
 	}
 
 	function handleInput() {
 		checkForMention();
+		autoResize();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -120,12 +132,39 @@
 				return;
 			}
 		}
+
+		if (e.key === 'Enter') {
+			if (e.altKey || e.ctrlKey) {
+				// Opt+Enter (Mac) / Ctrl+Enter (PC): insert newline
+				requestAnimationFrame(autoResize);
+				return;
+			}
+			const cursorPos = inputEl?.selectionStart ?? 0;
+			if (isInCodeBlock(value, cursorPos)) {
+				// Inside code block: let default behavior insert newline
+				requestAnimationFrame(autoResize);
+				return;
+			}
+			// Normal Enter: send (prevent newline, call parent)
+			e.preventDefault();
+			parentKeydown?.(e);
+			requestAnimationFrame(autoResize);
+			return;
+		}
+
 		parentKeydown?.(e);
 	}
 
 	function handleClick(e: MouseEvent) {
 		setTimeout(checkForMention, 0);
 	}
+
+	// Reset height when value is cleared (after send)
+	$effect(() => {
+		// Track value changes
+		value;
+		requestAnimationFrame(autoResize);
+	});
 </script>
 
 <div class="relative flex-1">
@@ -144,15 +183,16 @@
 			{/each}
 		</div>
 	{/if}
-	<input
+	<textarea
 		bind:this={inputEl}
-		type="text"
 		bind:value={value}
 		oninput={handleInput}
 		onkeydown={handleKeydown}
 		onclick={handleClick}
 		{placeholder}
 		{disabled}
-		class="w-full {className}"
-	/>
+		rows="1"
+		class="w-full resize-none overflow-y-auto {className}"
+		style="max-height: 200px;"
+	></textarea>
 </div>
