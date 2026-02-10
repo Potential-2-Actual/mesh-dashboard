@@ -143,6 +143,26 @@ export async function searchMessages(options: { query: string; channel?: string 
 	}
 }
 
+export async function getKnownChannels(): Promise<string[]> {
+	const kv = await getMembersKv();
+	const channels = new Set<string>();
+	try {
+		const keys: string[] = [];
+		const keyIter = await kv.keys();
+		for await (const key of keyIter) {
+			keys.push(key);
+		}
+		for (const key of keys) {
+			const dotIdx = key.indexOf('.');
+			if (dotIdx > 0) {
+				channels.add(key.substring(0, dotIdx));
+			}
+		}
+	} catch { /* no keys yet */ }
+	channels.add('general');
+	return [...channels].sort();
+}
+
 // --- KV membership functions ---
 import type { MemberInfo } from '$lib/types.js';
 
