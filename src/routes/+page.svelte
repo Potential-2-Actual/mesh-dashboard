@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { messages, presence, connectionStatus, members, telemetry } from '$lib/stores.js';
+	import { messages, presence, connectionStatus, members, telemetry, receipts, sentMessageIds } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { connectNats, publishMessage, disconnectNats, requestSessionHistory, sendSessionMessage } from '$lib/nats-client.js';
@@ -22,6 +22,8 @@
 	let currentPresence: Map<string, any> = $state(new Map());
 	let currentMembers: Map<string, MemberInfo> = $state(new Map());
 	let currentTelemetry: Map<string, TelemetryPayload> = $state(new Map());
+	let currentReceipts: Map<string, string[]> = $state(new Map());
+	let currentSentIds: Set<string> = $state(new Set());
 	let currentStatus: string = $state('disconnected');
 
 	// Pagination state
@@ -119,6 +121,8 @@
 	const unsubMembers = members.subscribe((v) => { currentMembers = v; });
 	const unsubStatus = connectionStatus.subscribe((v) => { currentStatus = v; });
 	const unsubTelemetry = telemetry.subscribe((v) => { currentTelemetry = v; });
+	const unsubReceipts = receipts.subscribe((v) => { currentReceipts = v; });
+	const unsubSentIds = sentMessageIds.subscribe((v) => { currentSentIds = v; });
 
 	// Sorted members list: online first, then alphabetical
 	let sortedMembers = $derived.by(() => {
@@ -177,8 +181,13 @@
 	async function send() {
 		const text = messageInput.trim();
 		if (!text) return;
-		publishMessage(text);
 		messageInput = '';
+		try {
+			const msgId = await publishMessage(text);
+			sentMessageIds.update((s) => { const next = new Set(s); next.add(msgId); return next; });
+		} catch (err) {
+			console.error('Send failed:', err);
+		}
 	}
 
 	async function loadMore() {
@@ -476,6 +485,8 @@
 		unsubMembers();
 		unsubStatus();
 		unsubTelemetry();
+		unsubReceipts();
+		unsubSentIds();
 		disconnectNats();
 	});
 </script>
@@ -611,6 +622,14 @@
 						<Avatar name={msg.from.agent} type={msg.from.type} size={22} />
 						<span class="ml-1 font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
 						<span class="ml-1 text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
+						{#if currentSentIds.has(msg.id)}
+							{@const agentReceipts = currentReceipts.get(msg.id)}
+							{#if agentReceipts && agentReceipts.length > 0}
+								<span class="ml-1.5 text-emerald-400 text-xs cursor-default select-none" title="Received by: {agentReceipts.join(', ')}">✓</span>
+							{:else}
+								<span class="ml-1.5 text-gray-500 text-xs cursor-default select-none" title="Sent">✓</span>
+							{/if}
+						{/if}
 					</div>
 				{/if}
 			{/each}
