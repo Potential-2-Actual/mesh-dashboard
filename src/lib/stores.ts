@@ -30,3 +30,5 @@ export const members = writable<Map<string, MemberInfo>>(new Map());
 export const telemetry = writable<Map<string, TelemetryPayload>>(new Map());
 export const receipts = writable<Map<string, string[]>>(new Map());
 export const sentMessageIds = writable<Set<string>>(new Set());
+export const activeChannel = writable<string>('general');
+export const unreadChannels = writable<Set<string>>(new Set());

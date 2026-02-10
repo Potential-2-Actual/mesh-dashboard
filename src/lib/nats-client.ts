@@ -1,5 +1,5 @@
 import { connect, type NatsConnection, type Subscription, nkeyAuthenticator } from 'nats.ws';
-import { messages, presence, connectionStatus, systemEvents, telemetry, receipts } from './stores.js';
+import { messages, presence, connectionStatus, systemEvents, telemetry, receipts, activeChannel, unreadChannels } from './stores.js';
 import type { MessageEnvelope, PresenceInfo, TelemetryPayload, SessionHistoryResponse } from './types.js';
 import { get } from 'svelte/store';
 
@@ -114,14 +114,22 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 			}
 		})();
 
-		// Subscribe to channels
-		const channelSub = nc.subscribe('mesh.channel.general');
+		// Subscribe to all channels (wildcard)
+		const channelSub = nc.subscribe('mesh.channel.>');
 		subs.push(channelSub);
 		(async () => {
 			for await (const msg of channelSub) {
 				try {
 					const envelope: MessageEnvelope = JSON.parse(new TextDecoder().decode(msg.data));
+					// Tag with channel name parsed from subject
+					const channel = msg.subject.replace('mesh.channel.', '');
+					(envelope as any)._channel = channel;
 					messages.update((msgs) => [...msgs, envelope]);
+					// Mark unread if not active channel
+					const currentActive = get(activeChannel);
+					if (channel !== currentActive) {
+						unreadChannels.update((s) => { const next = new Set(s); next.add(channel); return next; });
+					}
 				} catch { /* ignore malformed */ }
 			}
 		})();
@@ -335,11 +343,11 @@ export async function sendSessionMessage(
 	return JSON.parse(new TextDecoder().decode(response.data));
 }
 
-export async function publishMessage(text: string): Promise<string> {
+export async function publishMessage(text: string, channel: string = 'general'): Promise<string> {
 	const res = await fetch('/api/send', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ text, subject: 'mesh.channel.general' })
+		body: JSON.stringify({ text, subject: `mesh.channel.${channel}` })
 	});
 	if (!res.ok) {
 		const err = await res.text();

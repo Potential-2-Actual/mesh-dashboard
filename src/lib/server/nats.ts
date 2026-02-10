@@ -36,15 +36,15 @@ export async function getNatsConnection(): Promise<NatsConnection> {
 	return connection;
 }
 
-export async function fetchHistory(options: { before?: number; limit?: number } = {}): Promise<{ messages: any[]; hasMore: boolean }> {
-	const { before, limit = 50 } = options;
+export async function fetchHistory(options: { before?: number; limit?: number; channel?: string } = {}): Promise<{ messages: any[]; hasMore: boolean }> {
+	const { before, limit = 50, channel = 'general' } = options;
 	const nc = await getNatsConnection();
 	const jsm = await nc.jetstreamManager();
 	const js = nc.jetstream();
 
 	try {
 		const consumerConfig: any = {
-			filter_subject: 'mesh.channel.general',
+			filter_subject: `mesh.channel.${channel}`,
 			ack_policy: 'none' as any,
 			inactive_threshold: 30_000_000_000
 		};
