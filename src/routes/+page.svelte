@@ -675,7 +675,7 @@
 		</div>
 
 		<!-- Message feed -->
-		<div bind:this={feedEl} class="flex-1 overflow-y-auto px-4 py-2 space-y-1">
+		<div bind:this={feedEl} class="flex-1 overflow-y-auto px-4 py-2 space-y-2">
 			{#if viewMode === 'session'}
 				<!-- Session messages -->
 				{#if sessionLoading}
@@ -748,24 +748,26 @@
 
 				{#each filteredMessages as msg (msg.id)}
 					{#if isSystemMessage(msg)}
-						<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 leading-5 transition-colors duration-1000">
+						<div id="msg-{msg.id}" class="text-xs italic text-gray-500 px-3 py-1.5 transition-colors duration-1000">
 							<span class="text-gray-600">{formatTime(msg.ts)}</span>
 							<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
 							<span>[{msg.from.agent}]</span>
 							<span>{msg.content.text}</span>
 						</div>
 					{:else}
-						<div id="msg-{msg.id}" class="py-0.5 leading-6 transition-colors duration-1000">
-							<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
-							<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={18} /></span>
-							<span class="font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
-							<span class="text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
+						<div id="msg-{msg.id}" class="rounded-lg {msg.from.type === 'human' ? 'bg-gray-800' : 'bg-gray-800/70 border-l-2 border-blue-500/30'} p-3 max-w-[90%] transition-colors duration-1000">
+							<div class="flex items-center gap-1.5 text-[10px] font-medium mb-1">
+								<span class="inline-block"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
+								<span class="{msg.from.type === 'human' ? 'text-emerald-500' : 'text-blue-400'}">{msg.from.agent}</span>
+								<span class="text-gray-600">{formatTime(msg.ts)}</span>
+							</div>
+							<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</div>
 							{#if currentSentIds.has(msg.id)}
 								{@const agentReceipts = currentReceipts.get(msg.id)}
 								{#if agentReceipts && agentReceipts.length > 0}
-									<span class="ml-1.5 text-emerald-400 text-xs cursor-default select-none" title="Received by: {agentReceipts.join(', ')}">✓</span>
+									<span class="mt-1 inline-block text-emerald-400 text-xs cursor-default select-none" title="Received by: {agentReceipts.join(', ')}">✓</span>
 								{:else}
-									<span class="ml-1.5 text-gray-500 text-xs cursor-default select-none" title="Sent">✓</span>
+									<span class="mt-1 inline-block text-gray-500 text-xs cursor-default select-none" title="Sent">✓</span>
 								{/if}
 							{/if}
 						</div>
