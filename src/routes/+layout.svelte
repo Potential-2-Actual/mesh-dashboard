@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import 'highlight.js/styles/github-dark.css';
 	let { children, data } = $props();
 </script>
 
