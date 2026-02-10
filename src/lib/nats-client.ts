@@ -1,5 +1,5 @@
 import { connect, type NatsConnection, type Subscription, nkeyAuthenticator } from 'nats.ws';
-import { messages, presence, connectionStatus, systemEvents, telemetry } from './stores.js';
+import { messages, presence, connectionStatus, systemEvents, telemetry, receipts } from './stores.js';
 import type { MessageEnvelope, PresenceInfo, TelemetryPayload, SessionHistoryResponse } from './types.js';
 import { get } from 'svelte/store';
 
@@ -118,6 +118,28 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 			}
 		})();
 
+		// Subscribe to receipts
+		const receiptSub = nc.subscribe('mesh.receipt.>');
+		subs.push(receiptSub);
+		(async () => {
+			for await (const msg of receiptSub) {
+				try {
+					const data = JSON.parse(new TextDecoder().decode(msg.data));
+					const { messageId, agent } = data;
+					if (messageId && agent) {
+						receipts.update((r) => {
+							const next = new Map(r);
+							const agents = next.get(messageId) ?? [];
+							if (!agents.includes(agent)) {
+								next.set(messageId, [...agents, agent]);
+							}
+							return next;
+						});
+					}
+				} catch { /* ignore */ }
+			}
+		})();
+
 		// Publish presence heartbeat for dashboard user
 		if (userName) {
 			const publishPresence = () => {
@@ -164,7 +186,7 @@ export async function sendSessionMessage(
 	return JSON.parse(new TextDecoder().decode(response.data));
 }
 
-export async function publishMessage(text: string): Promise<void> {
+export async function publishMessage(text: string): Promise<string> {
 	const res = await fetch('/api/send', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -174,6 +196,8 @@ export async function publishMessage(text: string): Promise<void> {
 		const err = await res.text();
 		throw new Error(`Send failed: ${err}`);
 	}
+	const data = await res.json();
+	return data.id;
 }
 
 export async function disconnectNats() {
