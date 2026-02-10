@@ -52,6 +52,68 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 			}
 		})();
 
+		// Load presence from KV bucket (instant member list)
+		(async () => {
+			try {
+				const js = nc!.jetstream();
+				const kv = await js.views.kv('MESH-PRESENCE');
+
+				// Read all entries - collect keys first, then fetch (avoid consumer conflicts)
+				const keys: string[] = [];
+				for await (const key of await kv.keys()) {
+					keys.push(key);
+				}
+				for (const key of keys) {
+					const entry = await kv.get(key);
+					if (entry?.value) {
+						const data = JSON.parse(new TextDecoder().decode(entry.value));
+						const info: PresenceInfo = {
+							agent: data.name || key,
+							type: data.type || 'unknown',
+							status: data.status || 'online',
+							lastSeen: data.lastSeen ? new Date(data.lastSeen).getTime() : Date.now()
+						};
+						presence.update((p) => {
+							const next = new Map(p);
+							next.set(info.agent, info);
+							return next;
+						});
+					}
+				}
+
+				// Watch for live KV updates
+				const watch = await kv.watch();
+				for await (const entry of watch) {
+					if (entry.operation === 'DEL' || entry.operation === 'PURGE') {
+						presence.update((p) => {
+							const next = new Map(p);
+							next.delete(entry.key);
+							return next;
+						});
+					} else if (entry.value) {
+						const data = JSON.parse(new TextDecoder().decode(entry.value));
+						const info: PresenceInfo = {
+							agent: data.name || entry.key,
+							type: data.type || 'unknown',
+							status: data.status || 'online',
+							lastSeen: data.lastSeen ? new Date(data.lastSeen).getTime() : Date.now()
+						};
+						presence.update((p) => {
+							const next = new Map(p);
+							if (info.status === 'offline') {
+								next.delete(info.agent);
+							} else {
+								next.set(info.agent, info);
+							}
+							return next;
+						});
+					}
+				}
+			} catch (err) {
+				console.warn('KV presence load failed (falling back to pub/sub):', err);
+			}
+		})();
+
 		// Subscribe to channels
 		const channelSub = nc.subscribe('mesh.channel.general');
 		subs.push(channelSub);
