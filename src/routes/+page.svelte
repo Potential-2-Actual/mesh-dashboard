@@ -2,6 +2,7 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { messages, presence, connectionStatus, members, telemetry } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
+	import Avatar from '$lib/components/Avatar.svelte';
 	import { connectNats, publishMessage, disconnectNats, requestSessionHistory, sendSessionMessage } from '$lib/nats-client.js';
 	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse, SessionSendResponse } from '$lib/types.js';
 	import { marked } from 'marked';
@@ -598,14 +599,16 @@
 
 			{#each currentMessages as msg (msg.id)}
 				{#if isSystemMessage(msg)}
-					<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 transition-colors duration-1000">
+					<div id="msg-{msg.id}" class="flex items-center gap-1 text-xs italic text-gray-500 py-0.5 transition-colors duration-1000">
 						<span class="text-gray-600">{formatTime(msg.ts)}</span>
+						<Avatar name={msg.from.agent} type={msg.from.type} size={18} />
 						<span class="ml-1">[{msg.from.agent}]</span>
 						<span class="ml-1">{msg.content.text}</span>
 					</div>
 				{:else}
-					<div id="msg-{msg.id}" class="py-0.5 transition-colors duration-1000">
+					<div id="msg-{msg.id}" class="flex items-center gap-1 py-0.5 transition-colors duration-1000">
 						<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
+						<Avatar name={msg.from.agent} type={msg.from.type} size={22} />
 						<span class="ml-1 font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
 						<span class="ml-1 text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
 					</div>
@@ -673,6 +676,7 @@
 							onclick={() => scrollToMessage(result.id)}>
 							<div class="flex items-center gap-2 text-xs text-gray-500 mb-1">
 								<span>{formatDateTime(result.ts)}</span>
+								<Avatar name={result.from.agent} type={result.from.type} size={18} />
 								<span class="font-medium {result.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{result.from.agent}</span>
 							</div>
 							<div class="text-sm text-gray-300">{@html highlightMatch(result.content.text, searchQuery)}</div>
