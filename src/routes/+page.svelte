@@ -610,18 +610,18 @@
 
 			{#each currentMessages as msg (msg.id)}
 				{#if isSystemMessage(msg)}
-					<div id="msg-{msg.id}" class="flex items-start gap-1 text-xs italic text-gray-500 py-0.5 transition-colors duration-1000">
-						<span class="shrink-0 whitespace-nowrap text-gray-600">{formatTime(msg.ts)}</span>
-						<span class="shrink-0"><Avatar name={msg.from.agent} type={msg.from.type} size={18} /></span>
-						<span class="shrink-0 whitespace-nowrap">[{msg.from.agent}]</span>
-						<span class="min-w-0">{msg.content.text}</span>
+					<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 leading-5 transition-colors duration-1000">
+						<span class="text-gray-600">{formatTime(msg.ts)}</span>
+						<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
+						<span>[{msg.from.agent}]</span>
+						<span>{msg.content.text}</span>
 					</div>
 				{:else}
-					<div id="msg-{msg.id}" class="flex items-start gap-1 py-0.5 transition-colors duration-1000">
-						<span class="shrink-0 whitespace-nowrap text-xs text-gray-500">{formatTime(msg.ts)}</span>
-						<span class="shrink-0"><Avatar name={msg.from.agent} type={msg.from.type} size={22} /></span>
-						<span class="shrink-0 whitespace-nowrap ml-1 font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
-						<span class="min-w-0 ml-1 text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
+					<div id="msg-{msg.id}" class="py-0.5 leading-6 transition-colors duration-1000">
+						<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
+						<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={18} /></span>
+						<span class="font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
+						<span class="text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
 						{#if currentSentIds.has(msg.id)}
 							{@const agentReceipts = currentReceipts.get(msg.id)}
 							{#if agentReceipts && agentReceipts.length > 0}
