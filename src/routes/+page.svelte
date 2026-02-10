@@ -42,6 +42,9 @@
 	// Inspector state
 	let inspectorAgent = $state<string | null>(null);
 
+	// View mode: channel or session
+	let viewMode = $state<'channel' | 'session'>('channel');
+
 	// Session viewer state
 	let viewingSession = $state<{ agentName: string; sessionKey: string } | null>(null);
 	let sessionHistory = $state<SessionHistoryResponse | null>(null);
@@ -79,9 +82,12 @@
 	});
 
 	async function switchChannel(channel: string) {
-		if (channel === currentActiveChannel) return;
-		// Close session viewer if open
-		if (viewingSession) closeSessionViewer();
+		if (channel === currentActiveChannel && viewMode === 'channel') return;
+		// Exit session mode
+		viewMode = 'channel';
+		viewingSession = null;
+		sessionHistory = null;
+		sessionError = null;
 		activeChannel.set(channel);
 		// Clear unread for this channel
 		unreadChannels.update((s) => { const next = new Set(s); next.delete(channel); return next; });
@@ -365,12 +371,12 @@
 	}
 
 	async function openSessionViewer(agentName: string, sessionKey: string) {
+		viewMode = 'session';
 		viewingSession = { agentName, sessionKey };
 		sessionHistory = null;
 		sessionError = null;
 		sessionLoading = true;
 		expandedThinking = new Set();
-		// Close inspector if open
 		inspectorAgent = null;
 		try {
 			const result = await requestSessionHistory(agentName, sessionKey);
@@ -383,10 +389,7 @@
 			sessionError = `Failed to load session: ${err}`;
 		}
 		sessionLoading = false;
-		// Scroll to bottom after render
-		await tick();
-		const el = document.getElementById('session-messages');
-		if (el) el.scrollTop = el.scrollHeight;
+		scrollToBottom();
 	}
 
 	async function sendToSession() {
@@ -413,9 +416,7 @@
 			};
 		}
 
-		await tick();
-		const el = document.getElementById('session-messages');
-		if (el) el.scrollTop = el.scrollHeight;
+		scrollToBottom();
 
 		try {
 			const result = await sendSessionMessage(viewingSession.agentName, viewingSession.sessionKey, text);
@@ -451,9 +452,7 @@
 			sessionSendError = `${err}`;
 		}
 		sessionSending = false;
-
-		await tick();
-		if (el) el.scrollTop = el.scrollHeight;
+		scrollToBottom();
 	}
 
 	function handleSessionKeydown(e: KeyboardEvent) {
@@ -464,6 +463,7 @@
 	}
 
 	function closeSessionViewer() {
+		viewMode = 'channel';
 		viewingSession = null;
 		sessionHistory = null;
 		sessionError = null;
@@ -613,7 +613,7 @@
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									{@const isActive = session.updatedAt > 0 && (Date.now() - session.updatedAt) < 30 * 60 * 1000}
-									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {isActive ? 'text-gray-300' : 'text-gray-600'}"
+									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {viewingSession?.agentName === agent.name && viewingSession?.sessionKey === session.key ? 'bg-gray-800/60 text-gray-100 font-medium' : isActive ? 'text-gray-300' : 'text-gray-600'}"
 										title="{session.key}{isActive ? ' (active)' : ''}"
 										onclick={() => openSessionViewer(agent.name, session.key)}>
 										<span class="text-[10px] {isActive ? 'text-green-400' : 'text-gray-700'}">{isActive ? '●' : '○'}</span>
@@ -653,10 +653,21 @@
 
 	<!-- Main chat area -->
 	<div class="flex flex-1 flex-col">
-		<!-- Channel header -->
+		<!-- Channel/Session header -->
 		<div class="flex items-center gap-2 border-b border-gray-800 px-4 py-1.5 text-xs">
-			<span class="text-gray-400 font-medium"># {currentActiveChannel}</span>
-			<span class="text-gray-600">· mesh.channel.{currentActiveChannel}</span>
+			{#if viewMode === 'session' && viewingSession}
+				<button onclick={closeSessionViewer} class="text-gray-500 hover:text-gray-300 mr-1" title="Back to channel">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+				</button>
+				<span class="text-blue-400 font-medium">🤖 {viewingSession.agentName}</span>
+				<span class="text-gray-600 truncate max-w-[300px]" title={viewingSession.sessionKey}>· {shortSessionLabel(viewingSession.sessionKey)}</span>
+				{#if sessionHistory}
+					<span class="text-gray-600">· {sessionHistory.total} messages</span>
+				{/if}
+			{:else}
+				<span class="text-gray-400 font-medium"># {currentActiveChannel}</span>
+				<span class="text-gray-600">· mesh.channel.{currentActiveChannel}</span>
+			{/if}
 			<button onclick={toggleSearch} class="ml-auto text-gray-500 hover:text-gray-300 text-xs" title="Search (Ctrl+K)">
 				<svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
 				<span class="ml-1">Search</span>
@@ -665,63 +676,149 @@
 
 		<!-- Message feed -->
 		<div bind:this={feedEl} class="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-			{#if hasMore}
-				<div class="flex justify-center py-2">
-					<button onclick={loadMore} disabled={loadingMore}
-						class="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded-md disabled:opacity-50 transition-colors">
-						{loadingMore ? 'Loading...' : '↑ Load older messages'}
-					</button>
-				</div>
-			{/if}
-
-			{#each filteredMessages as msg (msg.id)}
-				{#if isSystemMessage(msg)}
-					<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 leading-5 transition-colors duration-1000">
-						<span class="text-gray-600">{formatTime(msg.ts)}</span>
-						<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
-						<span>[{msg.from.agent}]</span>
-						<span>{msg.content.text}</span>
+			{#if viewMode === 'session'}
+				<!-- Session messages -->
+				{#if sessionLoading}
+					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+						<svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+						Loading session…
 					</div>
-				{:else}
-					<div id="msg-{msg.id}" class="py-0.5 leading-6 transition-colors duration-1000">
-						<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
-						<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={18} /></span>
-						<span class="font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
-						<span class="text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
-						{#if currentSentIds.has(msg.id)}
-							{@const agentReceipts = currentReceipts.get(msg.id)}
-							{#if agentReceipts && agentReceipts.length > 0}
-								<span class="ml-1.5 text-emerald-400 text-xs cursor-default select-none" title="Received by: {agentReceipts.join(', ')}">✓</span>
-							{:else}
-								<span class="ml-1.5 text-gray-500 text-xs cursor-default select-none" title="Sent">✓</span>
-							{/if}
+				{:else if sessionError}
+					<div class="flex items-center justify-center py-12 text-red-400 text-sm">{sessionError}</div>
+				{:else if sessionHistory}
+					{#each sessionHistory.messages as msg (msg.id)}
+						{#if msg.role === 'user'}
+							<div class="rounded-lg bg-gray-800 p-3 max-w-[90%]">
+								<div class="text-[10px] text-emerald-500 font-medium mb-1">User <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+								{#each msg.content as item}
+									{#if item.type === 'text' && item.text}
+										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
+									{/if}
+								{/each}
+							</div>
+						{:else if msg.role === 'assistant'}
+							<div class="rounded-lg bg-gray-800/70 p-3 max-w-[90%] border-l-2 border-blue-500/30">
+								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
+								{#each msg.content as item, i}
+									{#if item.type === 'text' && item.text}
+										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
+									{:else if item.type === 'thinking'}
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div class="text-xs text-gray-500 my-1 cursor-pointer hover:text-gray-400" onclick={() => toggleThinking(`${msg.id}-${i}`)}>
+											💭 Thinking…
+											{#if expandedThinking.has(`${msg.id}-${i}`)}
+												<div class="mt-1 text-gray-600 whitespace-pre-wrap">{item.text}</div>
+											{/if}
+										</div>
+									{:else if item.type === 'tool_use'}
+										<span class="inline-flex items-center gap-1 text-[10px] bg-gray-700 text-gray-400 rounded px-1.5 py-0.5 mr-1 my-0.5">🔧 {item.name}</span>
+									{/if}
+								{/each}
+							</div>
+						{:else if msg.role === 'toolResult'}
+							<div class="px-3 py-1">
+								{#each msg.content as item}
+									{#if item.type === 'tool_result'}
+										<span class="text-xs text-gray-500">{item.success ? '✅' : '❌'} {item.name}</span>
+									{/if}
+								{/each}
+							</div>
 						{/if}
+					{/each}
+
+					{#if sessionSending}
+						<div class="rounded-lg bg-gray-800/40 p-3 max-w-[90%] border-l-2 border-blue-500/20 animate-pulse">
+							<div class="text-xs text-blue-400/60">Agent thinking…</div>
+						</div>
+					{/if}
+				{:else}
+					<div class="flex h-full items-center justify-center text-gray-600">No messages</div>
+				{/if}
+			{:else}
+				<!-- Channel messages -->
+				{#if hasMore}
+					<div class="flex justify-center py-2">
+						<button onclick={loadMore} disabled={loadingMore}
+							class="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 hover:bg-gray-700 px-3 py-1 rounded-md disabled:opacity-50 transition-colors">
+							{loadingMore ? 'Loading...' : '↑ Load older messages'}
+						</button>
 					</div>
 				{/if}
-			{/each}
-			{#if filteredMessages.length === 0}
-				<div class="flex h-full items-center justify-center text-gray-600">No messages yet</div>
+
+				{#each filteredMessages as msg (msg.id)}
+					{#if isSystemMessage(msg)}
+						<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 leading-5 transition-colors duration-1000">
+							<span class="text-gray-600">{formatTime(msg.ts)}</span>
+							<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
+							<span>[{msg.from.agent}]</span>
+							<span>{msg.content.text}</span>
+						</div>
+					{:else}
+						<div id="msg-{msg.id}" class="py-0.5 leading-6 transition-colors duration-1000">
+							<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
+							<span class="inline-block align-middle"><Avatar name={msg.from.agent} type={msg.from.type} size={18} /></span>
+							<span class="font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
+							<span class="text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
+							{#if currentSentIds.has(msg.id)}
+								{@const agentReceipts = currentReceipts.get(msg.id)}
+								{#if agentReceipts && agentReceipts.length > 0}
+									<span class="ml-1.5 text-emerald-400 text-xs cursor-default select-none" title="Received by: {agentReceipts.join(', ')}">✓</span>
+								{:else}
+									<span class="ml-1.5 text-gray-500 text-xs cursor-default select-none" title="Sent">✓</span>
+								{/if}
+							{/if}
+						</div>
+					{/if}
+				{/each}
+				{#if filteredMessages.length === 0}
+					<div class="flex h-full items-center justify-center text-gray-600">No messages yet</div>
+				{/if}
 			{/if}
 		</div>
 
 		<!-- Input -->
 		<div class="border-t border-gray-800 p-3">
-			<div class="flex gap-2">
-				<MentionInput
-					bind:value={messageInput}
-					presence={currentPresence}
-					members={currentMembers}
-					onkeydown={handleKeydown}
-					placeholder="Type a message..."
-					class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
-					disabled={currentStatus !== 'connected'}
-				/>
-				<button onclick={send}
-					disabled={currentStatus !== 'connected' || !messageInput.trim()}
-					class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed">
-					Send
-				</button>
-			</div>
+			{#if viewMode === 'session' && sessionHistory && !sessionError}
+				{#if sessionSendError}
+					<div class="text-xs text-red-400 mb-2 px-1">{sessionSendError}</div>
+				{/if}
+				<div class="flex gap-2">
+					<input
+						type="text"
+						bind:value={sessionMessageInput}
+						onkeydown={handleSessionKeydown}
+						placeholder="Send a message to this session…"
+						disabled={sessionSending || currentStatus !== 'connected'}
+						class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-blue-500 disabled:opacity-40"
+					/>
+					<button
+						onclick={sendToSession}
+						disabled={sessionSending || !sessionMessageInput.trim() || currentStatus !== 'connected'}
+						class="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+						title="This triggers an agent turn and may incur API costs"
+					>
+						{sessionSending ? 'Sending…' : 'Send (triggers agent turn)'}
+					</button>
+				</div>
+			{:else if viewMode === 'channel'}
+				<div class="flex gap-2">
+					<MentionInput
+						bind:value={messageInput}
+						presence={currentPresence}
+						members={currentMembers}
+						onkeydown={handleKeydown}
+						placeholder="Type a message..."
+						class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-emerald-500"
+						disabled={currentStatus !== 'connected'}
+					/>
+					<button onclick={send}
+						disabled={currentStatus !== 'connected' || !messageInput.trim()}
+						class="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed">
+						Send
+					</button>
+				</div>
+			{/if}
 		</div>
 	</div>
 
@@ -870,114 +967,6 @@
 		</div>
 	{/if}
 
-	<!-- Session viewer slide-out panel -->
-	{#if viewingSession}
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="fixed inset-0 bg-black/30 z-40" onclick={closeSessionViewer}></div>
-		<div class="fixed right-0 top-0 h-full w-[520px] max-w-[90vw] bg-gray-900 border-l border-gray-700 z-50 flex flex-col shadow-2xl">
-			<div class="p-4 border-b border-gray-800">
-				<div class="flex items-center justify-between">
-					<div class="flex-1 min-w-0">
-						<h2 class="text-sm font-semibold text-gray-300 truncate" title={viewingSession.sessionKey}>{viewingSession.sessionKey}</h2>
-						{#if sessionHistory}
-							<div class="text-xs text-gray-500 mt-1">{sessionHistory.total} messages · session {sessionHistory.sessionId.slice(0, 8)}…</div>
-						{/if}
-					</div>
-					<button onclick={closeSessionViewer} class="text-gray-500 hover:text-gray-300 ml-2 flex-shrink-0">
-						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-					</button>
-				</div>
-			</div>
-
-			<div id="session-messages" class="flex-1 overflow-y-auto p-4 space-y-2">
-				{#if sessionLoading}
-					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">
-						<svg class="animate-spin h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-						Loading session…
-					</div>
-				{:else if sessionError}
-					<div class="flex items-center justify-center py-12 text-red-400 text-sm">{sessionError}</div>
-				{:else if sessionHistory}
-					{#each sessionHistory.messages as msg (msg.id)}
-						{#if msg.role === 'user'}
-							<div class="rounded-lg bg-gray-800 p-3 max-w-[90%]">
-								<div class="text-[10px] text-emerald-500 font-medium mb-1">User <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
-								{#each msg.content as item}
-									{#if item.type === 'text' && item.text}
-										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
-									{/if}
-								{/each}
-							</div>
-						{:else if msg.role === 'assistant'}
-							<div class="rounded-lg bg-gray-850 bg-gray-800/70 p-3 max-w-[90%] border-l-2 border-blue-500/30">
-								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
-								{#each msg.content as item, i}
-									{#if item.type === 'text' && item.text}
-										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
-									{:else if item.type === 'thinking'}
-										<!-- svelte-ignore a11y_click_events_have_key_events -->
-										<!-- svelte-ignore a11y_no_static_element_interactions -->
-										<div class="text-xs text-gray-500 my-1 cursor-pointer hover:text-gray-400" onclick={() => toggleThinking(`${msg.id}-${i}`)}>
-											💭 Thinking…
-											{#if expandedThinking.has(`${msg.id}-${i}`)}
-												<div class="mt-1 text-gray-600 whitespace-pre-wrap">{item.text}</div>
-											{/if}
-										</div>
-									{:else if item.type === 'tool_use'}
-										<span class="inline-flex items-center gap-1 text-[10px] bg-gray-700 text-gray-400 rounded px-1.5 py-0.5 mr-1 my-0.5">🔧 {item.name}</span>
-									{/if}
-								{/each}
-							</div>
-						{:else if msg.role === 'toolResult'}
-							<div class="px-3 py-1">
-								{#each msg.content as item}
-									{#if item.type === 'tool_result'}
-										<span class="text-xs text-gray-500">{item.success ? '✅' : '❌'} {item.name}</span>
-									{/if}
-								{/each}
-							</div>
-						{/if}
-					{/each}
-				{:else}
-					<div class="flex items-center justify-center py-12 text-gray-600 text-sm">No messages</div>
-				{/if}
-
-				{#if sessionSending}
-					<div class="rounded-lg bg-gray-800/40 p-3 max-w-[90%] border-l-2 border-blue-500/20 animate-pulse">
-						<div class="text-xs text-blue-400/60">Agent thinking…</div>
-					</div>
-				{/if}
-			</div>
-
-			<!-- Session send input -->
-			{#if sessionHistory && !sessionError}
-				<div class="border-t border-gray-800 p-3">
-					{#if sessionSendError}
-						<div class="text-xs text-red-400 mb-2 px-1">{sessionSendError}</div>
-					{/if}
-					<div class="flex gap-2">
-						<input
-							type="text"
-							bind:value={sessionMessageInput}
-							onkeydown={handleSessionKeydown}
-							placeholder="Send a message to this session…"
-							disabled={sessionSending || currentStatus !== 'connected'}
-							class="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 outline-none focus:border-blue-500 disabled:opacity-40"
-						/>
-						<button
-							onclick={sendToSession}
-							disabled={sessionSending || !sessionMessageInput.trim() || currentStatus !== 'connected'}
-							class="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-							title="This triggers an agent turn and may incur API costs"
-						>
-							{sessionSending ? 'Sending…' : 'Send (triggers agent turn)'}
-						</button>
-					</div>
-				</div>
-			{/if}
-		</div>
-	{/if}
 
 
 </div>
