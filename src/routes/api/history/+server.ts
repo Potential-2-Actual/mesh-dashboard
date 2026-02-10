@@ -7,12 +7,14 @@ export const GET: RequestHandler = async ({ locals, url }) => {
 
 	const beforeParam = url.searchParams.get('before');
 	const limitParam = url.searchParams.get('limit');
+	const channelParam = url.searchParams.get('channel');
 
 	const before = beforeParam ? parseFloat(beforeParam) : undefined;
 	const limit = limitParam ? parseInt(limitParam, 10) : 50;
+	const channel = channelParam || 'general';
 
 	try {
-		const result = await fetchHistory({ before, limit });
+		const result = await fetchHistory({ before, limit, channel });
 		return json(result);
 	} catch (err) {
 		console.error('History fetch error:', err);

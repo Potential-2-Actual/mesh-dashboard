@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { messages, presence, connectionStatus, members, telemetry, receipts, sentMessageIds } from '$lib/stores.js';
+	import { messages, presence, connectionStatus, members, telemetry, receipts, sentMessageIds, activeChannel, unreadChannels } from '$lib/stores.js';
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { connectNats, publishMessage, disconnectNats, requestSessionHistory, sendSessionMessage } from '$lib/nats-client.js';
@@ -57,6 +57,50 @@
 
 	function toggleSection(key: string) {
 		collapsedSections[key] = !collapsedSections[key];
+	}
+
+	// Channel switching
+	let currentActiveChannel = $state('general');
+	let currentUnread: Set<string> = $state(new Set());
+	let knownChannels = $state<string[]>(['general']);
+	const unsubActiveChannel = activeChannel.subscribe((v) => { currentActiveChannel = v; });
+	const unsubUnread = unreadChannels.subscribe((v) => { currentUnread = v; });
+
+	// Discover channels from incoming messages
+	$effect(() => {
+		const channels = new Set(knownChannels);
+		for (const msg of currentMessages) {
+			const ch = (msg as any)._channel;
+			if (ch && !channels.has(ch)) {
+				channels.add(ch);
+				knownChannels = [...channels].sort();
+			}
+		}
+	});
+
+	async function switchChannel(channel: string) {
+		if (channel === currentActiveChannel) return;
+		// Close session viewer if open
+		if (viewingSession) closeSessionViewer();
+		activeChannel.set(channel);
+		// Clear unread for this channel
+		unreadChannels.update((s) => { const next = new Set(s); next.delete(channel); return next; });
+		// Load history for the new channel
+		try {
+			const res = await fetch(`/api/history?channel=${encodeURIComponent(channel)}`);
+			if (res.ok) {
+				const data = await res.json();
+				// Tag messages with channel
+				const tagged = (data.messages ?? data).map((m: any) => ({ ...m, _channel: channel }));
+				// Merge with existing messages (keep other channels, replace this channel's history)
+				messages.update((msgs) => {
+					const otherMsgs = msgs.filter((m: any) => (m as any)._channel !== channel);
+					return [...otherMsgs, ...tagged].sort((a, b) => a.ts - b.ts);
+				});
+				hasMore = data.hasMore ?? false;
+			}
+		} catch { /* skip */ }
+		scrollToBottom();
 	}
 
 	function shortSessionLabel(key: string): string {
@@ -117,6 +161,16 @@
 	});
 
 	const unsubMsgs = messages.subscribe((v) => { currentMessages = v; scrollToBottom(); });
+
+	// Filtered messages for current channel
+	let filteredMessages = $derived.by(() => {
+		return currentMessages.filter((m) => {
+			const ch = (m as any)._channel;
+			// Show messages that match active channel, or have no channel tag (legacy/system)
+			if (!ch) return currentActiveChannel === 'general'; // legacy untagged = general
+			return ch === currentActiveChannel;
+		});
+	});
 	const unsubPresence = presence.subscribe((v) => { currentPresence = v; });
 	const unsubMembers = members.subscribe((v) => { currentMembers = v; });
 	const unsubStatus = connectionStatus.subscribe((v) => { currentStatus = v; });
@@ -183,7 +237,7 @@
 		if (!text) return;
 		messageInput = '';
 		try {
-			const msgId = await publishMessage(text);
+			const msgId = await publishMessage(text, currentActiveChannel);
 			sentMessageIds.update((s) => { const next = new Set(s); next.add(msgId); return next; });
 		} catch (err) {
 			console.error('Send failed:', err);
@@ -191,16 +245,17 @@
 	}
 
 	async function loadMore() {
-		if (loadingMore || !hasMore || currentMessages.length === 0) return;
+		if (loadingMore || !hasMore || filteredMessages.length === 0) return;
 		loadingMore = true;
-		const oldestTs = currentMessages[0]?.ts;
+		const oldestTs = filteredMessages[0]?.ts;
 		const prevScrollHeight = feedEl?.scrollHeight ?? 0;
 		try {
-			const res = await fetch(`/api/history?before=${oldestTs}&limit=50`);
+			const res = await fetch(`/api/history?before=${oldestTs}&limit=50&channel=${encodeURIComponent(currentActiveChannel)}`);
 			if (res.ok) {
 				const data = await res.json();
 				if (data.messages.length > 0) {
-					const combined = [...data.messages, ...currentMessages];
+					const tagged = data.messages.map((m: any) => ({ ...m, _channel: currentActiveChannel }));
+					const combined = [...tagged, ...currentMessages];
 					messages.set(combined);
 					hasMore = data.hasMore;
 					await tick();
@@ -442,7 +497,7 @@
 
 	async function fetchMembers() {
 		try {
-			const res = await fetch('/api/members?channel=general');
+			const res = await fetch(`/api/members?channel=${encodeURIComponent(currentActiveChannel)}`);
 			if (res.ok) {
 				const data = await res.json();
 				const map = new Map<string, MemberInfo>();
@@ -459,10 +514,11 @@
 		await fetchMembers();
 
 		try {
-			const res = await fetch('/api/history');
+			const res = await fetch('/api/history?channel=general');
 			if (res.ok) {
 				const data = await res.json();
-				messages.set(data.messages ?? data);
+				const tagged = (data.messages ?? data).map((m: any) => ({ ...m, _channel: 'general' }));
+				messages.set(tagged);
 				hasMore = data.hasMore ?? false;
 			}
 		} catch { /* skip */ }
@@ -487,6 +543,8 @@
 		unsubTelemetry();
 		unsubReceipts();
 		unsubSentIds();
+		unsubActiveChannel();
+		unsubUnread();
 		disconnectNats();
 	});
 </script>
@@ -505,11 +563,19 @@
 					<span>📡 Channels</span>
 				</div>
 				{#if !collapsedSections['channels']}
-					<div class="ml-2">
-						<div class="flex items-center gap-1.5 px-2 py-1 rounded text-sm bg-gray-800/60 text-gray-100 font-medium">
-							<span class="text-gray-500">#</span>
-							<span>general</span>
-						</div>
+					<div class="ml-2 space-y-0.5">
+						{#each knownChannels as ch}
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div class="flex items-center gap-1.5 px-2 py-1 rounded text-sm cursor-pointer transition-colors {ch === currentActiveChannel ? 'bg-gray-800/60 text-gray-100 font-medium' : 'text-gray-400 hover:bg-gray-800/30 hover:text-gray-200'}"
+								onclick={() => switchChannel(ch)}>
+								<span class="text-gray-500">#</span>
+								<span>{ch}</span>
+								{#if currentUnread.has(ch)}
+									<span class="ml-auto w-2 h-2 rounded-full bg-emerald-500"></span>
+								{/if}
+							</div>
+						{/each}
 					</div>
 				{/if}
 			</div>
@@ -589,8 +655,8 @@
 	<div class="flex flex-1 flex-col">
 		<!-- Channel header -->
 		<div class="flex items-center gap-2 border-b border-gray-800 px-4 py-1.5 text-xs">
-			<span class="text-gray-400 font-medium"># general</span>
-			<span class="text-gray-600">· mesh.channel.general</span>
+			<span class="text-gray-400 font-medium"># {currentActiveChannel}</span>
+			<span class="text-gray-600">· mesh.channel.{currentActiveChannel}</span>
 			<button onclick={toggleSearch} class="ml-auto text-gray-500 hover:text-gray-300 text-xs" title="Search (Ctrl+K)">
 				<svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
 				<span class="ml-1">Search</span>
@@ -608,7 +674,7 @@
 				</div>
 			{/if}
 
-			{#each currentMessages as msg (msg.id)}
+			{#each filteredMessages as msg (msg.id)}
 				{#if isSystemMessage(msg)}
 					<div id="msg-{msg.id}" class="text-xs italic text-gray-500 py-0.5 leading-5 transition-colors duration-1000">
 						<span class="text-gray-600">{formatTime(msg.ts)}</span>
@@ -633,7 +699,7 @@
 					</div>
 				{/if}
 			{/each}
-			{#if currentMessages.length === 0}
+			{#if filteredMessages.length === 0}
 				<div class="flex h-full items-center justify-center text-gray-600">No messages yet</div>
 			{/if}
 		</div>
