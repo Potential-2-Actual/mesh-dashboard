@@ -14,6 +14,8 @@
 		TextNode,
 		CodeNode,
 		CodeHighlightNode,
+		createCodeNode,
+		isCodeNode,
 		registerPlainText
 	} from './lexical-helpers.js';
 
@@ -94,58 +96,40 @@
 		let text = '';
 		if (!editor) return text;
 		editor.getEditorState().read(() => {
-			text = getRoot().getTextContent();
+			const root = getRoot();
+			const children = root.getChildren();
+			const parts: string[] = [];
+			for (const child of children) {
+				if (child.getType() === 'code') {
+					parts.push('```\n' + child.getTextContent() + '\n```');
+				} else {
+					parts.push(child.getTextContent());
+				}
+			}
+			text = parts.join('\n');
 		});
 		return text;
 	}
 
 	function isInCodeBlock(): boolean {
-		const text = getPlainText();
-		// Get cursor offset from the selection
-		let cursorOffset = text.length;
+		let inCode = false;
 		if (editor) {
 			editor.getEditorState().read(() => {
 				const sel = getSelection();
 				if (isRangeSelection(sel)) {
-					// Approximate: count text up to anchor
-					const anchor = sel.anchor;
-					const node = anchor.getNode();
-					// Walk tree to compute offset
-					let offset = 0;
-					const root = getRoot();
-					const allText = root.getTextContent();
-					// Use a simpler heuristic: check if anchor node is inside a CodeNode
+					let node = sel.anchor.getNode();
 					let parent = node.getParent();
 					while (parent) {
 						if (parent.getType() === 'code') {
-							cursorOffset = -1; // signal: in code
+							inCode = true;
 							return;
 						}
 						parent = parent.getParent();
 					}
-					// Fallback: check backtick pairs in plain text
-					cursorOffset = anchor.offset;
-					// Compute total offset by walking siblings
-					const prevSiblings = node.getPreviousSiblings();
-					for (const sib of prevSiblings) {
-						offset += sib.getTextContent().length;
-					}
-					// Walk up paragraphs
-					let pNode = node.getParent();
-					if (pNode) {
-						const pPrev = pNode.getPreviousSiblings();
-						for (const pp of pPrev) {
-							offset += pp.getTextContent().length + 1; // +1 for newline
-						}
-					}
-					cursorOffset = offset + anchor.offset;
 				}
 			});
 		}
-		if (cursorOffset === -1) return true; // inside CodeNode
-		const beforeCursor = text.substring(0, cursorOffset);
-		const matches = beforeCursor.match(/```/g);
-		return matches ? matches.length % 2 !== 0 : false;
+		return inCode;
 	}
 
 	function checkForMention() {
@@ -287,30 +271,62 @@
 			})
 		);
 
-		// Handle triple-backtick detection via text node transforms
+		// Handle triple-backtick detection: consume ``` and insert a CodeNode
 		cleanups.push(
 			editor.registerNodeTransform(TextNode, (node) => {
+				// Don't transform text nodes inside code blocks
+				const parent = node.getParent();
+				if (parent && parent.getType() === 'code') return;
+
 				const text = node.getTextContent();
 				const idx = text.indexOf('```');
-				if (idx !== -1) {
-					// Split: before ```, code block placeholder, after ```
-					const before = text.slice(0, idx);
-					const after = text.slice(idx + 3);
+				if (idx === -1) return;
 
-					// Check if there's a closing ``` in after
-					const closeIdx = after.indexOf('```');
+				const before = text.slice(0, idx);
+				const after = text.slice(idx + 3);
 
-					if (closeIdx === -1) {
-						// No closing backticks - auto-insert them
-						// Replace with: before + ``` + ``` + after, cursor between
-						const newText = before + '```\n```' + after;
-						node.setTextContent(newText);
-						// Position cursor between the backtick pairs
-						const cursorPos = before.length + 4; // after first ``` + newline
-						node.select(cursorPos, cursorPos);
+				// Create the code block node
+				const codeNode = createCodeNode();
+
+				// If there's text before the ```, keep it in the current node
+				if (before) {
+					node.setTextContent(before);
+					// Insert code node after the text node's parent paragraph
+					const parentNode = node.getParent();
+					if (parentNode) {
+						const newPara = createParagraphNode();
+						newPara.append(codeNode);
+						parentNode.insertAfter(newPara);
+						// If there's text after ```, add it in a new paragraph after the code
+						if (after.trim()) {
+							const afterPara = createParagraphNode();
+							afterPara.append(createTextNode(after));
+							newPara.insertAfter(afterPara);
+						}
 					}
-					// If closing ``` exists, leave it alone (user typed content between them)
+				} else {
+					// ``` was at the start — replace the text node with code block
+					const parentNode = node.getParent();
+					if (parentNode) {
+						const newPara = createParagraphNode();
+						newPara.append(codeNode);
+						parentNode.insertAfter(newPara);
+						// If there's text after ```, add it in a new paragraph
+						if (after.trim()) {
+							const afterPara = createParagraphNode();
+							afterPara.append(createTextNode(after));
+							newPara.insertAfter(afterPara);
+						}
+						// Remove the original text node if it's now empty
+						node.remove();
+						if (parentNode.getChildrenSize() === 0) {
+							parentNode.remove();
+						}
+					}
 				}
+
+				// Focus inside the code block
+				codeNode.selectEnd();
 			})
 		);
 

@@ -10,7 +10,7 @@ import {
 	$isTextNode,
 	TextNode
 } from 'lexical';
-import { CodeNode, CodeHighlightNode } from '@lexical/code';
+import { CodeNode, CodeHighlightNode, $createCodeNode, $isCodeNode } from '@lexical/code';
 import { registerPlainText } from '@lexical/plain-text';
 
 export {
@@ -26,5 +26,7 @@ export {
 	TextNode,
 	CodeNode,
 	CodeHighlightNode,
+	$createCodeNode as createCodeNode,
+	$isCodeNode as isCodeNode,
 	registerPlainText
 };
