@@ -1,5 +1,10 @@
 @import 'tailwindcss';
 
+/* iPadOS/iOS virtual keyboard — push content above keyboard */
+html, body {
+	padding-bottom: env(keyboard-inset-height, 0px);
+}
+
 /* Markdown rendering styles */
 .markdown-body {
 	overflow-wrap: break-word;
