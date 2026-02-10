@@ -3,6 +3,7 @@ name: Deploy Dashboard
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -24,4 +25,38 @@ jobs:
             --tunnel-through-iap \
             --quiet \
             --ssh-flag="-o StrictHostKeyChecking=no" \
-            --command="cd /opt/mesh-dashboard && sudo git pull origin main && sudo npm run build && sudo kill -9 \$(sudo systemctl show mesh-dashboard -p MainPID --value) && sudo systemctl start mesh-dashboard"
+            --command="
+              set -e
+              cd /opt/mesh-dashboard
+
+              echo '--- Backing up current build ---'
+              sudo cp -r build build.bak 2>/dev/null || true
+
+              echo '--- Pulling latest ---'
+              sudo git pull origin main
+
+              echo '--- Installing dependencies ---'
+              sudo npm ci --omit=dev
+
+              echo '--- Building ---'
+              if sudo npm run build; then
+                echo '--- Restarting service ---'
+                sudo systemctl restart mesh-dashboard
+                sleep 3
+                if systemctl is-active --quiet mesh-dashboard; then
+                  echo '--- Deploy successful ---'
+                  sudo rm -rf build.bak
+                else
+                  echo '--- Service failed! Rolling back ---'
+                  sudo rm -rf build
+                  sudo mv build.bak build
+                  sudo systemctl restart mesh-dashboard
+                  exit 1
+                fi
+              else
+                echo '--- Build failed! Rolling back ---'
+                sudo rm -rf build 2>/dev/null || true
+                sudo mv build.bak build 2>/dev/null || true
+                exit 1
+              fi
+            "
