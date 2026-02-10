@@ -134,8 +134,8 @@
 		}
 
 		if (e.key === 'Enter') {
-			if (e.shiftKey) {
-				// Shift+Enter: let default behavior insert newline
+			if (e.altKey || e.ctrlKey) {
+				// Opt+Enter (Mac) / Ctrl+Enter (PC): insert newline
 				requestAnimationFrame(autoResize);
 				return;
 			}
