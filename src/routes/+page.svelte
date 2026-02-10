@@ -7,6 +7,7 @@
 	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse, SessionSendResponse } from '$lib/types.js';
 	import { marked } from 'marked';
 	import hljs from 'highlight.js';
+	import DOMPurify from 'dompurify';
 	import { page } from '$app/stores';
 
 	// Derive presence name from user (same sanitization as /api/send)
@@ -318,7 +319,8 @@
 		const escaped = escapeHtml(text);
 		const escapedQuery = escapeHtml(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 		const regex = new RegExp(`(${escapedQuery})`, 'gi');
-		return escaped.replace(regex, '<mark class="bg-yellow-500/40 text-yellow-200 rounded px-0.5">$1</mark>');
+		const highlighted = escaped.replace(regex, '<mark class="bg-yellow-500/40 text-yellow-200 rounded px-0.5">$1</mark>');
+		return DOMPurify.sanitize(highlighted, { ALLOWED_TAGS: ['mark'], ALLOWED_ATTR: ['class'] });
 	}
 
 	function escapeHtml(s: string): string {
@@ -349,7 +351,7 @@
 			const colorClass = type === 'human' ? 'text-emerald-400' : 'text-blue-400';
 			return `<span class="font-semibold ${colorClass}">@${name}</span>`;
 		});
-		return html;
+		return DOMPurify.sanitize(html, { ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'span', 'mark', 'del', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'img', 'sup', 'sub'], ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'src', 'alt', 'id'] });
 	}
 
 	function scrollToMessage(msgId: string) {
