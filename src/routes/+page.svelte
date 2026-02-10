@@ -698,7 +698,7 @@
 				{:else if sessionHistory}
 					{#each sessionHistory.messages as msg (msg.id)}
 						{#if msg.role === 'user'}
-							<div class="rounded-lg bg-gray-800 p-3 max-w-[90%]">
+							<div class="rounded-lg bg-gray-800 p-3 max-w-[90%] min-w-0 overflow-hidden">
 								<div class="text-[10px] text-emerald-500 font-medium mb-1">User <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
 								{#each msg.content as item}
 									{#if item.type === 'text' && item.text}
@@ -707,7 +707,7 @@
 								{/each}
 							</div>
 						{:else if msg.role === 'assistant'}
-							<div class="rounded-lg bg-gray-800/70 p-3 max-w-[90%] border-l-2 border-blue-500/30">
+							<div class="rounded-lg bg-gray-800/70 p-3 max-w-[90%] min-w-0 overflow-hidden border-l-2 border-blue-500/30">>
 								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
 								{#each msg.content as item, i}
 									{#if item.type === 'text' && item.text}
@@ -765,7 +765,7 @@
 							<span>{msg.content.text}</span>
 						</div>
 					{:else}
-						<div id="msg-{msg.id}" class="rounded-lg {msg.from.type === 'human' ? 'bg-gray-800' : 'bg-gray-800/70 border-l-2 border-blue-500/30'} p-3 max-w-[90%] transition-colors duration-1000">
+						<div id="msg-{msg.id}" class="rounded-lg {msg.from.type === 'human' ? 'bg-gray-800' : 'bg-gray-800/70 border-l-2 border-blue-500/30'} p-3 max-w-[90%] min-w-0 overflow-hidden transition-colors duration-1000">
 							<div class="flex items-center gap-1.5 text-[10px] font-medium mb-1">
 								<span class="inline-block"><Avatar name={msg.from.agent} type={msg.from.type} size={16} /></span>
 								<span class="{msg.from.type === 'human' ? 'text-emerald-500' : 'text-blue-400'}">{msg.from.agent}</span>

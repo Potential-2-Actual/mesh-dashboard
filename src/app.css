@@ -1,6 +1,11 @@
 @import 'tailwindcss';
 
 /* Markdown rendering styles */
+.markdown-body {
+	overflow-wrap: break-word;
+	word-break: break-word;
+	min-width: 0;
+}
 .markdown-body p {
 	margin: 0.25em 0;
 }
