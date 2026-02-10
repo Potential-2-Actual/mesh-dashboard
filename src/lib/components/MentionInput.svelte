@@ -260,7 +260,17 @@
 		cleanups.push(
 			editor.registerUpdateListener(({ editorState, dirtyElements, dirtyLeaves }) => {
 				editorState.read(() => {
-					const text = getRoot().getTextContent();
+					const root = getRoot();
+					const children = root.getChildren();
+					const parts: string[] = [];
+					for (const child of children) {
+						if (child.getType() === 'code') {
+							parts.push('\n```\n' + child.getTextContent() + '\n```\n');
+						} else {
+							parts.push(child.getTextContent());
+						}
+					}
+					const text = parts.join('\n').trim();
 					internalUpdate = true;
 					value = text;
 					internalUpdate = false;
