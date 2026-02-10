@@ -20,6 +20,7 @@
 	} = $props();
 
 	let inputEl: HTMLTextAreaElement;
+	let inCodeBlock = $state(false);
 	let showDropdown = $state(false);
 	let selectedIndex = $state(0);
 	let mentionStart = $state(-1);
@@ -65,6 +66,11 @@
 		return matches ? matches.length % 2 !== 0 : false;
 	}
 
+	function updateCodeBlockState() {
+		const cursor = inputEl?.selectionStart ?? 0;
+		inCodeBlock = isInCodeBlock(value, cursor);
+	}
+
 	function autoResize() {
 		if (!inputEl) return;
 		inputEl.style.height = 'auto';
@@ -106,6 +112,7 @@
 
 	function handleInput() {
 		checkForMention();
+		updateCodeBlockState();
 		autoResize();
 	}
 
@@ -158,10 +165,11 @@
 		}
 
 		parentKeydown?.(e);
+		requestAnimationFrame(updateCodeBlockState);
 	}
 
 	function handleClick(e: MouseEvent) {
-		setTimeout(checkForMention, 0);
+		setTimeout(() => { checkForMention(); updateCodeBlockState(); }, 0);
 	}
 
 	// Reset height when value is cleared (after send)
@@ -197,7 +205,16 @@
 		{placeholder}
 		{disabled}
 		rows="1"
-		class="w-full resize-none overflow-y-auto {className}"
+		class="w-full resize-none overflow-y-auto {className} {inCodeBlock ? 'code-block-active' : ''}"
 		style="max-height: 200px;"
 	></textarea>
 </div>
+
+<style>
+	textarea.code-block-active {
+		font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+		background-color: rgba(0, 0, 0, 0.25);
+		border-left: 3px solid rgb(99, 102, 241);
+		transition: all 0.15s ease;
+	}
+</style>
