@@ -1,87 +1,27 @@
-name: Deploy Mesh Dashboard
+name: Deploy Dashboard
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-
-env:
-  VM_NAME: nats-mesh-staging
-  VM_ZONE: northamerica-northeast1-b
-  DEPLOY_PATH: /opt/mesh-dashboard
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Auth to GCP
+      - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - name: Setup gcloud
+      - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Create deploy package
-        run: tar czf /tmp/deploy.tar.gz build/ package.json package-lock.json
-
-      - name: Copy to VM
+      - name: Deploy via IAP tunnel
         run: |
-          gcloud compute scp /tmp/deploy.tar.gz \
-            gp_potential2actual_com@${{ env.VM_NAME }}:/tmp/deploy.tar.gz \
-            --zone=${{ env.VM_ZONE }} \
+          gcloud compute ssh gp_potential2actual_com@nats-mesh-staging \
+            --zone=northamerica-northeast1-b \
             --project=${{ secrets.GCP_PROJECT_ID }} \
-            --tunnel-through-iap --quiet
-
-      - name: Deploy on VM
-        run: |
-          gcloud compute ssh gp_potential2actual_com@${{ env.VM_NAME }} \
-            --zone=${{ env.VM_ZONE }} \
-            --project=${{ secrets.GCP_PROJECT_ID }} \
-            --tunnel-through-iap --quiet \
-            --command='set -e
-              cd /opt/mesh-dashboard
-              sudo bash -c "
-                [ -d build ] && mv build build.bak || true
-                tar xzf /tmp/deploy.tar.gz
-                npm ci --omit=dev
-                rm -rf build.bak /tmp/deploy.tar.gz
-                systemctl restart mesh-dashboard
-                sleep 3
-                systemctl is-active mesh-dashboard && echo \"✅ Deploy complete\"
-              "'
-
-      - name: Update OAuth credentials
-        run: |
-          gcloud compute ssh gp_potential2actual_com@${{ env.VM_NAME }} \
-            --zone=${{ env.VM_ZONE }} \
-            --project=${{ secrets.GCP_PROJECT_ID }} \
-            --tunnel-through-iap --quiet \
-            --command="sudo bash -c '
-              cd /opt/mesh-dashboard
-              if grep -q \"^GOOGLE_OAUTH_CLIENT_ID=\" .env 2>/dev/null; then
-                sed -i \"s|^GOOGLE_OAUTH_CLIENT_ID=.*|GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}|\" .env
-              else
-                echo \"GOOGLE_OAUTH_CLIENT_ID=${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}\" >> .env
-              fi
-              if grep -q \"^GOOGLE_OAUTH_CLIENT_SECRET=\" .env 2>/dev/null; then
-                sed -i \"s|^GOOGLE_OAUTH_CLIENT_SECRET=.*|GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}|\" .env
-              else
-                echo \"GOOGLE_OAUTH_CLIENT_SECRET=${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}\" >> .env
-              fi
-              systemctl restart mesh-dashboard
-              echo \"✅ OAuth creds updated\"
-            '"
+            --tunnel-through-iap \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --command="cd /opt/mesh-dashboard && sudo git pull origin main && sudo npm run build && sudo kill -9 \$(sudo systemctl show mesh-dashboard -p MainPID --value) && sudo systemctl start mesh-dashboard"
