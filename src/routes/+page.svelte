@@ -4,6 +4,8 @@
 	import MentionInput from '$lib/components/MentionInput.svelte';
 	import { connectNats, publishMessage, disconnectNats, requestSessionHistory, sendSessionMessage } from '$lib/nats-client.js';
 	import type { MessageEnvelope, MemberInfo, TelemetryPayload, SessionHistoryMessage, SessionHistoryResponse, SessionSendResponse } from '$lib/types.js';
+	import { marked } from 'marked';
+	import hljs from 'highlight.js';
 	import { page } from '$app/stores';
 
 	// Derive presence name from user (same sanitization as /api/send)
@@ -252,9 +254,23 @@
 		return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 	}
 
+	marked.setOptions({
+		highlight(code: string, lang: string) {
+			if (lang && hljs.getLanguage(lang)) {
+				return hljs.highlight(code, { language: lang }).value;
+			}
+			return hljs.highlightAuto(code).value;
+		},
+		breaks: true,
+		gfm: true
+	});
+
 	function renderMessage(text: string): string {
-		const escaped = escapeHtml(text);
-		return escaped.replace(/@(\w+)/g, (match, name) => {
+		let html = marked.parse(text, { async: false }) as string;
+		// Apply @mention highlighting, but skip inside <code> and <pre> blocks
+		html = html.replace(/(<code[\s\S]*?<\/code>)|(<pre[\s\S]*?<\/pre>)|@(\w+)/g, (match, code, pre, name) => {
+			if (code || pre) return match;
+			if (!name) return match;
 			const member = currentMembers.get(name);
 			const agent = currentPresence.get(name);
 			if (!member && !agent) return match;
@@ -262,6 +278,7 @@
 			const colorClass = type === 'human' ? 'text-emerald-400' : 'text-blue-400';
 			return `<span class="font-semibold ${colorClass}">@${name}</span>`;
 		});
+		return html;
 	}
 
 	function scrollToMessage(msgId: string) {
@@ -590,7 +607,7 @@
 					<div id="msg-{msg.id}" class="py-0.5 transition-colors duration-1000">
 						<span class="text-xs text-gray-500">{formatTime(msg.ts)}</span>
 						<span class="ml-1 font-medium {msg.from.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">[{msg.from.agent}]</span>
-						<span class="ml-1 text-sm text-gray-200">{@html renderMessage(msg.content.text)}</span>
+						<span class="ml-1 text-sm text-gray-200 markdown-body">{@html renderMessage(msg.content.text)}</span>
 					</div>
 				{/if}
 			{/each}
@@ -799,7 +816,7 @@
 								<div class="text-[10px] text-emerald-500 font-medium mb-1">User <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
 								{#each msg.content as item}
 									{#if item.type === 'text' && item.text}
-										<div class="text-sm text-gray-200 whitespace-pre-wrap">{item.text}</div>
+										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
 									{/if}
 								{/each}
 							</div>
@@ -808,7 +825,7 @@
 								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
 								{#each msg.content as item, i}
 									{#if item.type === 'text' && item.text}
-										<div class="text-sm text-gray-200 whitespace-pre-wrap">{item.text}</div>
+										<div class="text-sm text-gray-200 markdown-body">{@html renderMessage(item.text)}</div>
 									{:else if item.type === 'thinking'}
 										<!-- svelte-ignore a11y_click_events_have_key_events -->
 										<!-- svelte-ignore a11y_no_static_element_interactions -->
