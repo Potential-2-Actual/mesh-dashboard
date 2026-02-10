@@ -707,7 +707,7 @@
 								{/each}
 							</div>
 						{:else if msg.role === 'assistant'}
-							<div class="rounded-lg bg-gray-800/70 p-3 max-w-[90%] min-w-0 overflow-hidden border-l-2 border-blue-500/30">>
+							<div class="rounded-lg bg-gray-800/70 p-3 max-w-[90%] min-w-0 overflow-hidden border-l-2 border-blue-500/30">
 								<div class="text-[10px] text-blue-400 font-medium mb-1">Assistant <span class="text-gray-600 ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
 								{#each msg.content as item, i}
 									{#if item.type === 'text' && item.text}
