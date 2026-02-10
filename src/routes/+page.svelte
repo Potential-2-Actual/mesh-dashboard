@@ -514,6 +514,16 @@
 		await fetchMembers();
 
 		try {
+			const res = await fetch('/api/channels');
+			if (res.ok) {
+				const data = await res.json();
+				if (data.channels?.length) {
+					knownChannels = data.channels;
+				}
+			}
+		} catch { /* skip */ }
+
+		try {
 			const res = await fetch('/api/history?channel=general');
 			if (res.ok) {
 				const data = await res.json();
