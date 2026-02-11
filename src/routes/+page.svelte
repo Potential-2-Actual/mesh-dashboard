@@ -129,15 +129,46 @@
 		return joined.length > 28 ? joined.slice(0, 28) + '…' : joined;
 	}
 
+	// Agent status: green (online + fresh <2min), yellow (online but stale), amber (telemetry only, no presence), gray (offline)
+	function agentStatus(name: string, telem: TelemetryPayload | undefined): 'green' | 'yellow' | 'amber' | 'gray' {
+		const online = currentPresence.has(name);
+		if (!telem && !online) return 'gray';
+		if (!online && telem) return 'amber'; // telemetry exists but no presence heartbeat
+		const freshMs = telem ? (Date.now() / 1000 - telem.ts) * 1000 : Infinity;
+		if (online && freshMs < 2 * 60 * 1000) return 'green';
+		if (online) return 'yellow';
+		return 'gray';
+	}
+
+	const statusColors: Record<string, string> = {
+		green: 'bg-emerald-400',
+		yellow: 'bg-yellow-400',
+		amber: 'bg-amber-500',
+		gray: 'bg-gray-600'
+	};
+
+	const statusLabels: Record<string, string> = {
+		green: 'Online',
+		yellow: 'Online (telemetry stale)',
+		amber: 'Telemetry only (no presence)',
+		gray: 'Offline'
+	};
+
 	// Agent entries from telemetry, sorted: humans first, then alpha
 	let sidebarAgents = $derived.by(() => {
-		const agents: Array<{ name: string; type: 'human' | 'ai'; online: boolean; sessions: TelemetryPayload['sessions']['list']; activeCount: number }> = [];
+		const agents: Array<{ name: string; type: 'human' | 'ai'; online: boolean; status: 'green' | 'yellow' | 'amber' | 'gray'; statusTip: string; version: string; model: string; uptime: number; sessions: TelemetryPayload['sessions']['list']; activeCount: number }> = [];
 		for (const [name, telem] of currentTelemetry) {
 			const member = currentMembers.get(name);
+			const st = agentStatus(name, telem);
 			agents.push({
 				name,
 				type: member?.type ?? 'ai',
 				online: currentPresence.has(name),
+				status: st,
+				statusTip: `${statusLabels[st]} · v${telem.version} · ${telem.model} · up ${Math.floor(telem.uptime / 3600)}h${Math.floor((telem.uptime % 3600) / 60)}m`,
+				version: telem.version,
+				model: telem.model,
+				uptime: telem.uptime,
 				sessions: telem.sessions.list,
 				activeCount: telem.sessions.active
 			});
@@ -601,8 +632,11 @@
 						onclick={() => toggleSection(agent.name)}>
 						<svg class="w-3 h-3 transition-transform {collapsedSections[agent.name] ? '-rotate-90' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
 						<span>{agent.type === 'human' ? '👤' : '🤖'}</span>
-						<span class="inline-block h-1.5 w-1.5 rounded-full {agent.online ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
+						<span class="inline-block h-2 w-2 rounded-full {statusColors[agent.status]}" title="{agent.statusTip}"></span>
 						<span class="{agent.type === 'human' ? 'text-emerald-500' : 'text-blue-500'}">{agent.name}</span>
+						{#if agent.version && agent.version !== 'unknown'}
+							<span class="text-[8px] text-gray-600 font-normal normal-case" title="Version">v{agent.version}</span>
+						{/if}
 						{#if agent.activeCount > 0}
 							<span class="ml-auto text-[9px] font-normal normal-case text-gray-600" title="{agent.activeCount} active session{agent.activeCount !== 1 ? 's' : ''}">{agent.activeCount} active</span>
 						{/if}
