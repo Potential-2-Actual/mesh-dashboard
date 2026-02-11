@@ -29,34 +29,30 @@ jobs:
               set -e
               cd /opt/mesh-dashboard
 
-              echo '--- Backing up current build ---'
-              sudo cp -r build build.bak 2>/dev/null || true
-
               echo '--- Pulling latest ---'
               sudo git pull origin main
 
-              echo '--- Installing dependencies ---'
-              sudo npm ci --omit=dev
+              echo '--- Rebuilding and restarting container ---'
+              cd /opt/mesh-infra/hosts/nats-mesh-staging
+              sudo docker compose build dashboard
+              sudo docker compose up -d dashboard
+              sleep 5
 
-              echo '--- Building ---'
-              if sudo npm run build; then
-                echo '--- Restarting service ---'
-                sudo systemctl restart mesh-dashboard
-                sleep 3
-                if systemctl is-active --quiet mesh-dashboard; then
-                  echo '--- Deploy successful ---'
-                  sudo rm -rf build.bak
-                else
-                  echo '--- Service failed! Rolling back ---'
-                  sudo rm -rf build
-                  sudo mv build.bak build
-                  sudo systemctl restart mesh-dashboard
-                  exit 1
-                fi
+              echo '--- Health check ---'
+              if sudo docker compose ps dashboard | grep -q 'Up'; then
+                echo '--- Deploy successful ---'
               else
-                echo '--- Build failed! Rolling back ---'
-                sudo rm -rf build 2>/dev/null || true
-                sudo mv build.bak build 2>/dev/null || true
+                echo '--- Container unhealthy! ---'
+                sudo docker compose logs dashboard --tail=20
                 exit 1
               fi
             "
+
+      - name: Cleanup SSH keys
+        if: always()
+        run: |
+          gcloud compute os-login ssh-keys list --format=json 2>/dev/null | \
+            jq -r '.[].key' 2>/dev/null | \
+            while read fp; do
+              [ -n "$fp" ] && gcloud compute os-login ssh-keys remove --key="$fp" --quiet 2>/dev/null
+            done || true
