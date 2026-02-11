@@ -13,7 +13,7 @@ export const GET: RequestHandler = async ({ locals }) => {
 	const expiresAt = Date.now() + SEED_TTL_MS;
 
 	return json(
-		{ seed, url: env.NATS_URL || 'wss://mesh.potential2actual.com/nats', expiresAt, ttlMs: SEED_TTL_MS },
+		{ seed, url: env.NATS_PUBLIC_URL || 'wss://mesh.potential2actual.com/nats', expiresAt, ttlMs: SEED_TTL_MS },
 		{
 			headers: {
 				'Cache-Control': 'no-store, no-cache, must-revalidate',
