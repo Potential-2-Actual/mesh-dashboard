@@ -255,6 +255,7 @@
 	});
 
 	async function scrollToBottom() {
+		if (viewMode === 'telemetry') return; // telemetry should stay at top
 		await tick();
 		if (feedEl) feedEl.scrollTop = feedEl.scrollHeight;
 	}
@@ -417,17 +418,20 @@
 		inspectorAgent = null;
 	}
 
-	function openTelemetryView(agentName: string) {
+	async function openTelemetryView(agentName: string) {
 		viewMode = 'telemetry';
 		viewingAgent = agentName;
 		viewingSession = null;
 		sessionHistory = null;
 		inspectorAgent = null;
+		await tick();
+		if (feedEl) feedEl.scrollTop = 0;
 	}
 
 	function closeTelemetryView() {
 		viewMode = 'channel';
 		viewingAgent = null;
+		scrollToBottom();
 	}
 
 	async function openSessionViewer(agentName: string, sessionKey: string) {
