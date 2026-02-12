@@ -9,6 +9,23 @@ let seedExpiresAt = 0;
 let currentNatsUrl = '';
 let presenceInterval: ReturnType<typeof setInterval> | null = null;
 
+/** Convert KV lean summary to full TelemetryPayload shape, preserving all available fields */
+function kvToTelemetry(raw: any): TelemetryPayload {
+	if (raw.sessions) return raw;
+	return {
+		agent: raw.agent,
+		version: raw.version,
+		model: raw.model,
+		uptime: raw.uptime ?? 0,
+		sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
+		subAgents: { running: 0, completed: 0 },
+		tokens: raw.tokens,
+		messages: raw.messages,
+		system: raw.system,
+		ts: raw.ts,
+	};
+}
+
 async function fetchSeed(): Promise<string> {
 	const res = await fetch('/api/nats-token');
 	if (!res.ok) throw new Error('Failed to fetch NATS credentials');
@@ -203,14 +220,7 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 					if (entry?.value) {
 						const raw = JSON.parse(new TextDecoder().decode(entry.value));
 						// KV contains lean summary — convert to TelemetryPayload shape for nav
-						const data: TelemetryPayload = raw.sessions ? raw : {
-							agent: raw.agent,
-							version: raw.version,
-							model: raw.model,
-							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
-							subAgents: { running: 0, completed: 0 },
-							ts: raw.ts,
-						};
+						const data = kvToTelemetry(raw);
 						telemetry.update((t) => {
 							const next = new Map(t);
 							next.set(data.agent, data);
@@ -228,7 +238,7 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 					} catch { /* ignore */ }
 				});
 
-				// Watch for live KV updates
+				// Watch for live KV updates — only update if KV has newer data
 				const watch = await kv.watch();
 				for await (const entry of watch) {
 					if (entry.operation === 'DEL' || entry.operation === 'PURGE') {
@@ -239,16 +249,14 @@ export async function connectNats(natsUrl: string, seed: string, userName?: stri
 						});
 					} else if (entry.value) {
 						const raw = JSON.parse(new TextDecoder().decode(entry.value));
-						const data: TelemetryPayload = raw.sessions ? raw : {
-							agent: raw.agent,
-							version: raw.version,
-							model: raw.model,
-							sessions: { total: raw.sessionCount ?? 0, active: raw.activeCount ?? 0, list: [] },
-							subAgents: { running: 0, completed: 0 },
-							ts: raw.ts,
-						};
+						const data = kvToTelemetry(raw);
 						telemetry.update((t) => {
 							const next = new Map(t);
+							const existing = next.get(data.agent);
+							// Don't overwrite richer pub/sub data with lean KV data
+							if (existing && existing.sessions?.list?.length > 0 && data.sessions.list.length === 0 && existing.ts >= data.ts) {
+								return t;
+							}
 							next.set(data.agent, data);
 							return next;
 						});
