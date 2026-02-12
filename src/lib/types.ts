@@ -66,5 +66,22 @@ export interface TelemetryPayload {
 		running: number;
 		completed: number;
 	};
+	tokens?: {
+		totalInput: number;
+		totalOutput: number;
+		last24hInput: number;
+		last24hOutput: number;
+	};
+	messages?: {
+		sent: number;
+		received: number;
+		errors: number;
+	};
+	system?: {
+		cpuPercent: number;
+		memoryMB: number;
+		memoryPercent: number;
+		pid: number;
+	};
 	ts: number;
 }
