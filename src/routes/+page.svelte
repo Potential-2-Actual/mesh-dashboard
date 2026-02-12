@@ -40,11 +40,14 @@
 	let searchLoading = $state(false);
 	let searchDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// Inspector state
+	// Inspector state (legacy, kept for compatibility)
 	let inspectorAgent = $state<string | null>(null);
 
-	// View mode: channel or session
-	let viewMode = $state<'channel' | 'session'>('channel');
+	// View mode: channel, session, or telemetry
+	let viewMode = $state<'channel' | 'session' | 'telemetry'>('channel');
+
+	// Telemetry full-page view state
+	let viewingAgent = $state<string | null>(null);
 
 	// Session viewer state
 	let viewingSession = $state<{ agentName: string; sessionKey: string } | null>(null);
@@ -235,6 +238,17 @@
 		return currentTelemetry.get(inspectorAgent) ?? null;
 	});
 
+	// Current telemetry view data
+	let telemetryViewData = $derived.by(() => {
+		if (!viewingAgent) return null;
+		return currentTelemetry.get(viewingAgent) ?? null;
+	});
+
+	let telemetryViewStatus = $derived.by(() => {
+		if (!viewingAgent) return 'gray';
+		return agentStatus(viewingAgent, telemetryViewData ?? undefined);
+	});
+
 	let inspectorIsStale = $derived.by(() => {
 		if (!inspectorData) return false;
 		return (Date.now() / 1000 - inspectorData.ts) > 120; // stale if >2min old
@@ -403,6 +417,19 @@
 		inspectorAgent = null;
 	}
 
+	function openTelemetryView(agentName: string) {
+		viewMode = 'telemetry';
+		viewingAgent = agentName;
+		viewingSession = null;
+		sessionHistory = null;
+		inspectorAgent = null;
+	}
+
+	function closeTelemetryView() {
+		viewMode = 'channel';
+		viewingAgent = null;
+	}
+
 	async function openSessionViewer(agentName: string, sessionKey: string) {
 		viewMode = 'session';
 		viewingSession = { agentName, sessionKey };
@@ -522,6 +549,7 @@
 			toggleSearch();
 		}
 		if (e.key === 'Escape') {
+			if (viewMode === 'telemetry') { closeTelemetryView(); return; }
 			if (viewingSession) { closeSessionViewer(); return; }
 			if (inspectorAgent) { closeInspector(); return; }
 			if (searchOpen) { searchOpen = false; searchQuery = ''; searchResults = []; }
@@ -647,8 +675,8 @@
 							{#if currentTelemetry.has(agent.name)}
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
-								<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs text-gray-400 hover:bg-gray-800/50 hover:text-gray-300 cursor-pointer transition-colors"
-									onclick={() => openInspector(agent.name)}>
+								<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs cursor-pointer transition-colors {viewMode === 'telemetry' && viewingAgent === agent.name ? 'bg-gray-800/60 text-gray-100 font-medium' : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-300'}"
+									onclick={() => openTelemetryView(agent.name)}>
 									<span class="text-[10px]">📊</span>
 									<span>Telemetry</span>
 								</div>
@@ -699,9 +727,15 @@
 
 	<!-- Main chat area -->
 	<div class="flex flex-1 flex-col">
-		<!-- Channel/Session header -->
+		<!-- Channel/Session/Telemetry header -->
 		<div class="flex items-center gap-2 border-b border-gray-800 px-4 py-1.5 text-xs">
-			{#if viewMode === 'session' && viewingSession}
+			{#if viewMode === 'telemetry' && viewingAgent}
+				<button onclick={closeTelemetryView} class="text-gray-500 hover:text-gray-300 mr-1" title="Back to channel">
+					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+				</button>
+				<span class="text-blue-400 font-medium">📊 {viewingAgent}</span>
+				<span class="text-gray-600">· Telemetry</span>
+			{:else if viewMode === 'session' && viewingSession}
 				<button onclick={closeSessionViewer} class="text-gray-500 hover:text-gray-300 mr-1" title="Back to channel">
 					<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
 				</button>
@@ -722,7 +756,184 @@
 
 		<!-- Message feed -->
 		<div bind:this={feedEl} class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 space-y-2">
-			{#if viewMode === 'session'}
+			{#if viewMode === 'telemetry' && viewingAgent}
+				<!-- Telemetry full-page view -->
+				{#if telemetryViewData}
+					{@const tData = telemetryViewData}
+					<!-- Identity card -->
+					<div class="bg-gray-800 rounded-lg p-4 flex items-center gap-4">
+						<div class="flex items-center gap-3">
+							<span class="inline-block h-3 w-3 rounded-full {statusColors[telemetryViewStatus]}"></span>
+							<div>
+								<h2 class="text-lg font-semibold text-gray-100">{viewingAgent}</h2>
+								<div class="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
+									<span>v{tData.version}</span>
+									<span class="text-gray-600">·</span>
+									<span class="truncate max-w-[300px]">{tData.model}</span>
+									<span class="text-gray-600">·</span>
+									<span>{statusLabels[telemetryViewStatus]}</span>
+								</div>
+							</div>
+						</div>
+						{#if (Date.now() / 1000 - tData.ts) > 120}
+							<span class="ml-auto text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">STALE — last report {formatDateTime(tData.ts)}</span>
+						{/if}
+					</div>
+
+					<!-- Stats grid -->
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Uptime</div>
+							<div class="text-xl font-bold text-gray-100">{formatUptime(tData.uptime)}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Active Sessions</div>
+							<div class="text-xl font-bold text-emerald-400">{tData.sessions.active}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Total Sessions</div>
+							<div class="text-xl font-bold text-gray-100">{tData.sessions.total}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg p-3">
+							<div class="text-[10px] uppercase text-gray-500 mb-1">Sub-Agents</div>
+							<div class="text-xl font-bold text-gray-100">
+								<span class="text-emerald-400">{tData.subAgents.running}</span>
+								<span class="text-gray-500 text-sm font-normal">running</span>
+								<span class="text-gray-500 text-sm font-normal ml-1">/ {tData.subAgents.completed} done</span>
+							</div>
+						</div>
+					</div>
+
+					<!-- Token burn + Messages + System row -->
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+						<!-- Token burn -->
+						<div class="bg-gray-800 rounded-lg p-4">
+							<div class="text-[10px] uppercase text-gray-500 mb-3">🔥 Token Burn</div>
+							{#if tData.tokens}
+								<div class="grid grid-cols-2 gap-4 mb-3">
+									<div>
+										<div class="text-2xl font-bold text-orange-400">{formatTokens(tData.tokens.last24hInput)}</div>
+										<div class="text-[10px] text-gray-500 uppercase">24h Input</div>
+									</div>
+									<div>
+										<div class="text-2xl font-bold text-orange-300">{formatTokens(tData.tokens.last24hOutput)}</div>
+										<div class="text-[10px] text-gray-500 uppercase">24h Output</div>
+									</div>
+								</div>
+								<div class="border-t border-gray-700 pt-2 grid grid-cols-2 gap-4">
+									<div>
+										<div class="text-sm text-gray-300">{formatTokens(tData.tokens.totalInput)}</div>
+										<div class="text-[10px] text-gray-600">Total Input</div>
+									</div>
+									<div>
+										<div class="text-sm text-gray-300">{formatTokens(tData.tokens.totalOutput)}</div>
+										<div class="text-[10px] text-gray-600">Total Output</div>
+									</div>
+								</div>
+							{:else}
+								<div class="text-sm text-gray-600 italic">No token data reported</div>
+							{/if}
+						</div>
+
+						<!-- Messages -->
+						<div class="bg-gray-800 rounded-lg p-4">
+							<div class="text-[10px] uppercase text-gray-500 mb-3">💬 Messages</div>
+							{#if tData.messages}
+								<div class="space-y-3">
+									<div class="flex items-center justify-between">
+										<span class="text-sm text-gray-400">Sent</span>
+										<span class="text-lg font-bold text-blue-400">{tData.messages.sent.toLocaleString()}</span>
+									</div>
+									<div class="flex items-center justify-between">
+										<span class="text-sm text-gray-400">Received</span>
+										<span class="text-lg font-bold text-emerald-400">{tData.messages.received.toLocaleString()}</span>
+									</div>
+									<div class="flex items-center justify-between">
+										<span class="text-sm text-gray-400">Errors</span>
+										<span class="text-lg font-bold {tData.messages.errors > 0 ? 'text-red-400' : 'text-gray-600'}">{tData.messages.errors.toLocaleString()}</span>
+									</div>
+								</div>
+							{:else}
+								<div class="text-sm text-gray-600 italic">No message data reported</div>
+							{/if}
+						</div>
+
+						<!-- System metrics -->
+						<div class="bg-gray-800 rounded-lg p-4">
+							<div class="text-[10px] uppercase text-gray-500 mb-3">🖥️ System</div>
+							{#if tData.system}
+								<div class="space-y-3">
+									<div>
+										<div class="flex items-center justify-between mb-1">
+											<span class="text-sm text-gray-400">CPU</span>
+											<span class="text-sm font-bold {tData.system.cpuPercent > 80 ? 'text-red-400' : tData.system.cpuPercent > 50 ? 'text-yellow-400' : 'text-emerald-400'}">{tData.system.cpuPercent.toFixed(1)}%</span>
+										</div>
+										<div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+											<div class="{tData.system.cpuPercent > 80 ? 'bg-red-500' : tData.system.cpuPercent > 50 ? 'bg-yellow-500' : 'bg-emerald-500'} h-full rounded-full transition-all" style="width: {Math.min(100, tData.system.cpuPercent)}%"></div>
+										</div>
+									</div>
+									<div>
+										<div class="flex items-center justify-between mb-1">
+											<span class="text-sm text-gray-400">Memory</span>
+											<span class="text-sm font-bold text-gray-200">{tData.system.memoryMB.toFixed(0)} MB</span>
+										</div>
+										<div class="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+											<div class="{tData.system.memoryPercent > 80 ? 'bg-red-500' : tData.system.memoryPercent > 50 ? 'bg-yellow-500' : 'bg-blue-500'} h-full rounded-full transition-all" style="width: {Math.min(100, tData.system.memoryPercent)}%"></div>
+										</div>
+										<div class="text-[10px] text-gray-600 mt-0.5">{tData.system.memoryPercent.toFixed(1)}% · PID {tData.system.pid}</div>
+									</div>
+								</div>
+							{:else}
+								<div class="text-sm text-gray-600 italic">No system data reported</div>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Sessions with context bars -->
+					{#if tData.sessions.list.length > 0}
+						<div>
+							<div class="text-[10px] uppercase text-gray-500 mb-2">Sessions</div>
+							<div class="space-y-2">
+								{#each tData.sessions.list as session}
+									{@const pct = session.contextMax > 0 ? Math.min(100, (session.tokens / session.contextMax) * 100) : 0}
+									{@const barColor = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-blue-500'}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div class="bg-gray-800 rounded-lg p-3 cursor-pointer hover:bg-gray-750 transition-colors"
+										onclick={() => openSessionViewer(viewingAgent!, session.key)}>
+										<div class="flex items-center justify-between mb-1.5">
+											<div class="text-sm text-gray-200 truncate max-w-[400px]" title={session.key}>
+												{shortSessionLabel(session.key)}
+											</div>
+											<div class="flex items-center gap-2 text-[10px] text-gray-500">
+												<span>{session.channel}</span>
+												{#if session.model}
+													<span class="text-gray-600">·</span>
+													<span>{session.model}</span>
+												{/if}
+											</div>
+										</div>
+										<div class="flex items-center gap-2">
+											<div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+												<div class="{barColor} h-full rounded-full transition-all" style="width: {pct}%"></div>
+											</div>
+											<div class="text-[10px] text-gray-400 whitespace-nowrap">
+												{formatTokens(session.tokens)} / {formatTokens(session.contextMax)}
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
+				{:else}
+					<div class="flex flex-col items-center justify-center py-20 text-gray-600">
+						<svg class="w-16 h-16 mb-4 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+						<div class="text-base">No telemetry data</div>
+						<div class="text-xs text-gray-700 mt-1">{viewingAgent} hasn't reported telemetry yet</div>
+					</div>
+				{/if}
+			{:else if viewMode === 'session'}
 				<!-- Session messages -->
 				{#if sessionLoading}
 					<div class="flex items-center justify-center py-12 text-gray-500 text-sm">
@@ -827,7 +1038,9 @@
 
 		<!-- Input -->
 		<div class="border-t border-gray-800 p-3">
-			{#if viewMode === 'session' && sessionHistory && !sessionError}
+			{#if viewMode === 'telemetry'}
+				<!-- No input in telemetry view -->
+			{:else if viewMode === 'session' && sessionHistory && !sessionError}
 				{#if sessionSendError}
 					<div class="text-xs text-red-400 mb-2 px-1">{sessionSendError}</div>
 				{/if}
@@ -912,104 +1125,6 @@
 							<div class="text-sm text-gray-300">{@html highlightMatch(result.content.text, searchQuery)}</div>
 						</div>
 					{/each}
-				{/if}
-			</div>
-		</div>
-	{/if}
-
-	<!-- Inspector slide-out panel -->
-	{#if inspectorAgent}
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="fixed inset-0 bg-black/30 z-40" onclick={closeInspector}></div>
-		<div class="fixed right-0 top-0 h-full w-[420px] max-w-[90vw] bg-gray-900 border-l border-gray-700 z-50 flex flex-col shadow-2xl">
-			<div class="p-4 border-b border-gray-800">
-				<div class="flex items-center justify-between">
-					<div class="flex items-center gap-2">
-						<span class="inline-block h-2.5 w-2.5 rounded-full {currentPresence.has(inspectorAgent) ? 'bg-emerald-400' : 'bg-gray-600'}"></span>
-						<h2 class="text-base font-semibold {currentMembers.get(inspectorAgent)?.type === 'human' ? 'text-emerald-400' : 'text-blue-400'}">{inspectorAgent}</h2>
-						{#if inspectorIsStale}
-							<span class="text-[10px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded">STALE</span>
-						{/if}
-					</div>
-					<button onclick={closeInspector} class="text-gray-500 hover:text-gray-300">
-						<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-					</button>
-				</div>
-			</div>
-
-			<div class="flex-1 overflow-y-auto p-4 space-y-4">
-				{#if inspectorData}
-					<!-- Overview -->
-					<div class="grid grid-cols-2 gap-3">
-						<div class="bg-gray-800 rounded-lg p-3">
-							<div class="text-[10px] uppercase text-gray-500 mb-1">Model</div>
-							<div class="text-sm text-gray-200 truncate">{inspectorData.model}</div>
-						</div>
-						<div class="bg-gray-800 rounded-lg p-3">
-							<div class="text-[10px] uppercase text-gray-500 mb-1">Version</div>
-							<div class="text-sm text-gray-200">{inspectorData.version}</div>
-						</div>
-						<div class="bg-gray-800 rounded-lg p-3">
-							<div class="text-[10px] uppercase text-gray-500 mb-1">Uptime</div>
-							<div class="text-sm text-gray-200">{formatUptime(inspectorData.uptime)}</div>
-						</div>
-						<div class="bg-gray-800 rounded-lg p-3">
-							<div class="text-[10px] uppercase text-gray-500 mb-1">Last Report</div>
-							<div class="text-sm text-gray-200">{formatTime(inspectorData.ts)}</div>
-						</div>
-					</div>
-
-					<!-- Sessions overview -->
-					<div class="bg-gray-800 rounded-lg p-3">
-						<div class="flex items-center justify-between mb-2">
-							<div class="text-[10px] uppercase text-gray-500">Sessions</div>
-							<div class="text-xs text-gray-400">{inspectorData.sessions.active} active / {inspectorData.sessions.total} total</div>
-						</div>
-						{#if inspectorData.subAgents.running > 0 || inspectorData.subAgents.completed > 0}
-							<div class="text-xs text-gray-500 mb-2">
-								Sub-agents: <span class="text-emerald-400">{inspectorData.subAgents.running} running</span> · {inspectorData.subAgents.completed} completed
-							</div>
-						{/if}
-					</div>
-
-					<!-- Active sessions with context bars -->
-					{#if inspectorData.sessions.list.length > 0}
-						<div>
-							<div class="text-[10px] uppercase text-gray-500 mb-2">Recent Sessions</div>
-							<div class="space-y-2">
-								{#each inspectorData.sessions.list as session}
-									{@const pct = session.contextMax > 0 ? Math.min(100, (session.tokens / session.contextMax) * 100) : 0}
-									{@const barColor = pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-blue-500'}
-									<div class="bg-gray-800 rounded-lg p-2.5">
-										<div class="flex items-center justify-between mb-1">
-											<div class="text-xs text-gray-300 truncate max-w-[240px]" title={session.key}>
-												{session.key.split(':').slice(-1)[0] || session.key}
-											</div>
-											<div class="text-[10px] text-gray-500">{session.channel}</div>
-										</div>
-										<div class="flex items-center gap-2">
-											<div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-												<div class="{barColor} h-full rounded-full transition-all" style="width: {pct}%"></div>
-											</div>
-											<div class="text-[10px] text-gray-400 whitespace-nowrap">
-												{formatTokens(session.tokens)} / {formatTokens(session.contextMax)}
-											</div>
-										</div>
-										{#if session.model}
-											<div class="text-[10px] text-gray-600 mt-1">{session.model}</div>
-										{/if}
-									</div>
-								{/each}
-							</div>
-						</div>
-					{/if}
-				{:else}
-					<div class="flex flex-col items-center justify-center py-12 text-gray-600">
-						<svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-						<div class="text-sm">No telemetry</div>
-						<div class="text-xs text-gray-700 mt-1">This agent hasn't reported yet</div>
-					</div>
 				{/if}
 			</div>
 		</div>
