@@ -9,6 +9,7 @@
 		createParagraphNode,
 		createTextNode,
 		KEY_ENTER_COMMAND,
+		KEY_BACKSPACE_COMMAND,
 		COMMAND_PRIORITY_HIGH,
 		isTextNode,
 		TextNode,
@@ -45,6 +46,7 @@
 	let mentionStart = $state(-1);
 	let query = $state('');
 	let internalUpdate = false;
+	let suppressMentionCheck = false;
 	let cleanups: (() => void)[] = [];
 
 	let suggestions = $derived.by(() => {
@@ -133,6 +135,10 @@
 	}
 
 	function checkForMention() {
+		if (suppressMentionCheck) {
+			suppressMentionCheck = false;
+			return;
+		}
 		const text = getPlainText();
 		// Get cursor position from editor
 		let cursor = text.length;
@@ -220,6 +226,7 @@
 		});
 
 		showDropdown = false;
+		suppressMentionCheck = true;
 	}
 
 	function autoResize() {
@@ -278,6 +285,53 @@
 				requestAnimationFrame(autoResize);
 				// Check mentions on every update
 				setTimeout(checkForMention, 0);
+			})
+		);
+
+		// Style @mentions in the editor (POT-172)
+		// Node transform that splits @mention into a styled text node.
+		// Guard: skip if node already has mention styling applied.
+		const MENTION_STYLE = 'color: rgb(96, 165, 250); font-weight: bold;';
+		cleanups.push(
+			editor.registerNodeTransform(TextNode, (node) => {
+				const parent = node.getParent();
+				if (!parent || parent.getType() === 'code') return;
+				// Skip nodes that already have mention styling
+				if (node.getStyle() === MENTION_STYLE) return;
+
+				const text = node.getTextContent();
+				const mentionRegex = /@(\w+)/g;
+				let match = mentionRegex.exec(text);
+				if (!match) return;
+
+				// Check if this is a known member
+				const name = match[1];
+				const isKnown = (members && [...members.values()].some(m => m.name === name)) ||
+					(presence && [...presence.values()].some(p => p.agent === name));
+				if (!isKnown) return;
+
+				const start = match.index;
+				const end = start + match[0].length;
+
+				// Split and style only the first match (transform will re-run for remaining)
+				if (start === 0 && end === text.length) {
+					// Entire node is the mention
+					node.setStyle(MENTION_STYLE);
+					return;
+				}
+
+				const splits: number[] = [];
+				if (start > 0) splits.push(start);
+				if (end < text.length) splits.push(end);
+
+				if (splits.length > 0) {
+					const parts = node.splitText(...splits);
+					// The mention part is at index: start > 0 ? 1 : 0
+					const mentionNode = start > 0 ? parts[1] : parts[0];
+					if (mentionNode) {
+						mentionNode.setStyle(MENTION_STYLE);
+					}
+				}
 			})
 		);
 
@@ -341,6 +395,70 @@
 				// Focus inside the code block
 				codeNode.selectEnd();
 			})
+		);
+
+		// Backspace in code block: exit code mode when on empty trailing line (POT-173)
+		cleanups.push(
+			editor.registerCommand(
+				KEY_BACKSPACE_COMMAND,
+				(event: KeyboardEvent | null) => {
+					if (!event) return false;
+
+					let handled = false;
+					editor!.getEditorState().read(() => {
+						const sel = getSelection();
+						if (!isRangeSelection(sel)) return;
+						if (!sel.isCollapsed()) return;
+
+						const anchorNode = sel.anchor.getNode();
+						const parent = anchorNode.getParent();
+						if (!parent || parent.getType() !== 'code') return;
+
+						// Check if cursor is at offset 0 of the anchor node
+						if (sel.anchor.offset !== 0) return;
+
+						const textContent = anchorNode.getTextContent();
+						// Check if current line is empty (node is empty or just whitespace at the end)
+						if (textContent !== '' && textContent !== '\n') return;
+
+						// Check if this is the last child of the code block
+						const nextSibling = anchorNode.getNextSibling();
+						if (nextSibling !== null) return;
+
+						handled = true;
+					});
+
+					if (handled) {
+						event.preventDefault();
+						editor!.update(() => {
+							const sel = getSelection();
+							if (!isRangeSelection(sel)) return;
+							const anchorNode = sel.anchor.getNode();
+							const codeBlock = anchorNode.getParent();
+							if (!codeBlock) return;
+
+							// Remove the empty trailing text/line from the code block
+							anchorNode.remove();
+
+							// If code block is now empty, remove it entirely
+							if (codeBlock.getChildrenSize() === 0) {
+								const para = createParagraphNode();
+								codeBlock.insertAfter(para);
+								codeBlock.remove();
+								para.selectStart();
+							} else {
+								// Insert a paragraph after the code block and focus it
+								const para = createParagraphNode();
+								codeBlock.insertAfter(para);
+								para.selectStart();
+							}
+						});
+						return true;
+					}
+					return false;
+				},
+				COMMAND_PRIORITY_HIGH
+			)
 		);
 
 		// Enter key handling
