@@ -17,23 +17,41 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Fetch secrets and generate .env
+        id: secrets
+        run: |
+          ENV_CONTENT="DASHBOARD_SRC_PATH=/opt/mesh-dashboard"
+          ENV_CONTENT="${ENV_CONTENT}\nDOMAIN=$(gcloud secrets versions access latest --secret=dashboard-domain --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_NATS_SERVER_SEED=$(gcloud secrets versions access latest --secret=dashboard-nats-server-seed --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_BROWSER_SEED=$(gcloud secrets versions access latest --secret=dashboard-browser-seed --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_GOOGLE_CLIENT_ID=$(gcloud secrets versions access latest --secret=dashboard-google-client-id --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_GOOGLE_CLIENT_SECRET=$(gcloud secrets versions access latest --secret=dashboard-google-client-secret --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_SESSION_SECRET=$(gcloud secrets versions access latest --secret=dashboard-session-secret --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nDASHBOARD_HMAC_SECRET=$(gcloud secrets versions access latest --secret=dashboard-hmac-secret --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nALLOWED_EMAILS=$(gcloud secrets versions access latest --secret=dashboard-allowed-emails --project=falom-platform)"
+          ENV_CONTENT="${ENV_CONTENT}\nGRAFANA_ADMIN_PASSWORD=$(gcloud secrets versions access latest --secret=grafana-admin-password --project=falom-platform)"
+          echo "env_b64=$(echo -e "$ENV_CONTENT" | base64 -w0)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy via IAP tunnel
         run: |
           gcloud compute ssh gp_potential2actual_com@nats-mesh-staging \
             --zone=northamerica-northeast1-b \
-            --project=${{ secrets.GCP_PROJECT_ID }} \
+            --project=falom-platform \
             --tunnel-through-iap \
             --quiet \
             --ssh-flag="-o StrictHostKeyChecking=no" \
-            --command="
+            -- "
               set -e
               cd /opt/mesh-dashboard
 
               echo '--- Pulling latest ---'
               sudo git pull origin main
 
-              echo '--- Rebuilding and restarting container ---'
+              echo '--- Writing .env ---'
               cd /opt/mesh-infra/hosts/nats-mesh-staging
+              echo '${{ steps.secrets.outputs.env_b64 }}' | base64 -d | sudo tee .env > /dev/null
+
+              echo '--- Rebuilding and restarting dashboard ---'
               sudo docker compose build dashboard
               sudo docker compose up -d dashboard
               sleep 5
