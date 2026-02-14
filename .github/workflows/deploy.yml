@@ -50,7 +50,9 @@ jobs:
               cd /opt/mesh-dashboard
 
               echo '--- Pulling latest ---'
-              sudo git pull origin main
+              sudo git config --global --add safe.directory /opt/mesh-dashboard
+              sudo git fetch origin main
+              sudo git reset --hard origin/main
 
               echo '--- Writing .env ---'
               cd /opt/mesh-infra/hosts/nats-mesh-staging
