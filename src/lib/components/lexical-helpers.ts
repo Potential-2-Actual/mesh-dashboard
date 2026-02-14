@@ -6,6 +6,7 @@ import {
 	$createParagraphNode,
 	$createTextNode,
 	KEY_ENTER_COMMAND,
+	KEY_BACKSPACE_COMMAND,
 	COMMAND_PRIORITY_HIGH,
 	$isTextNode,
 	TextNode
@@ -21,6 +22,7 @@ export {
 	$createParagraphNode as createParagraphNode,
 	$createTextNode as createTextNode,
 	KEY_ENTER_COMMAND,
+	KEY_BACKSPACE_COMMAND,
 	COMMAND_PRIORITY_HIGH,
 	$isTextNode as isTextNode,
 	TextNode,
