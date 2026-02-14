@@ -50,6 +50,7 @@ jobs:
               cd /opt/mesh-dashboard
 
               echo '--- Pulling latest ---'
+              sudo git config --global --add safe.directory /opt/mesh-dashboard
               sudo git pull origin main
 
               echo '--- Writing .env ---'
