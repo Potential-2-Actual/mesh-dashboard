@@ -132,6 +132,55 @@
 		return joined.length > 28 ? joined.slice(0, 28) + '…' : joined;
 	}
 
+	// Session grouping: collapse repeated cron/spawn sessions (POT-174)
+	type SessionGroup = {
+		label: string;
+		sessions: TelemetryPayload['sessions']['list'];
+		isGroup: boolean;
+	};
+
+	function groupSessions(sessions: TelemetryPayload['sessions']['list']): SessionGroup[] {
+		const cronSessions: TelemetryPayload['sessions']['list'] = [];
+		const otherSessions: TelemetryPayload['sessions']['list'] = [];
+
+		for (const s of sessions) {
+			const stripped = s.key.split(':').slice(2); // strip agent:<name>:
+			if (stripped[0] === 'cron') {
+				cronSessions.push(s);
+			} else {
+				otherSessions.push(s);
+			}
+		}
+
+		const groups: SessionGroup[] = [];
+
+		// Regular sessions as individual entries
+		for (const s of otherSessions) {
+			groups.push({ label: shortSessionLabel(s.key), sessions: [s], isGroup: false });
+		}
+
+		// Cron sessions grouped together
+		if (cronSessions.length > 0) {
+			// Sort by updatedAt descending (most recent first)
+			cronSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+			groups.push({ label: `Cron Jobs (${cronSessions.length})`, sessions: cronSessions, isGroup: true });
+		}
+
+		return groups;
+	}
+
+	// Track which session groups are expanded
+	let expandedGroups = $state<Set<string>>(new Set());
+
+	function toggleGroup(label: string) {
+		expandedGroups = new Set(expandedGroups);
+		if (expandedGroups.has(label)) {
+			expandedGroups.delete(label);
+		} else {
+			expandedGroups.add(label);
+		}
+	}
+
 	// Agent status: green (online + fresh <2min), yellow (online but stale), amber (telemetry only, no presence), gray (offline)
 	function agentStatus(name: string, telem: TelemetryPayload | undefined): 'green' | 'yellow' | 'amber' | 'gray' {
 		const online = currentPresence.has(name);
@@ -687,16 +736,43 @@
 							{/if}
 							<!-- Session list -->
 							{#if agent.sessions.length > 0}
-								{#each agent.sessions as session}
-									<!-- svelte-ignore a11y_click_events_have_key_events -->
-									<!-- svelte-ignore a11y_no_static_element_interactions -->
-									{@const isActive = session.updatedAt > 0 && (Date.now() - session.updatedAt) < 30 * 60 * 1000}
-									<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {viewingSession?.agentName === agent.name && viewingSession?.sessionKey === session.key ? 'bg-gray-800/60 text-gray-100 font-medium' : isActive ? 'text-gray-300' : 'text-gray-600'}"
-										title="{session.key}{isActive ? ' (active)' : ''}"
-										onclick={() => openSessionViewer(agent.name, session.key)}>
-										<span class="text-[10px] {isActive ? 'text-green-400' : 'text-gray-700'}">{isActive ? '●' : '○'}</span>
-										<span class="truncate">{shortSessionLabel(session.key)}</span>
-									</div>
+								{@const sessionGroups = groupSessions(agent.sessions)}
+								{#each sessionGroups as group}
+									{#if group.isGroup}
+										<!-- Collapsible group (cron jobs) -->
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										<div class="flex items-center gap-1 px-2 py-0.5 rounded text-xs cursor-pointer hover:bg-gray-800/50 transition-colors text-gray-500"
+											onclick={() => toggleGroup(agent.name + ':' + group.label)}>
+											<span class="text-[10px] transition-transform {expandedGroups.has(agent.name + ':' + group.label) ? 'rotate-90' : ''}">▶</span>
+											<span class="truncate">{group.label}</span>
+										</div>
+										{#if expandedGroups.has(agent.name + ':' + group.label)}
+											{#each group.sessions as session}
+												<!-- svelte-ignore a11y_click_events_have_key_events -->
+												<!-- svelte-ignore a11y_no_static_element_interactions -->
+												{@const isActive = session.updatedAt > 0 && (Date.now() - session.updatedAt) < 30 * 60 * 1000}
+												<div class="flex items-center gap-1.5 pl-5 pr-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {viewingSession?.agentName === agent.name && viewingSession?.sessionKey === session.key ? 'bg-gray-800/60 text-gray-100 font-medium' : isActive ? 'text-gray-300' : 'text-gray-600'}"
+													title="{session.key}{isActive ? ' (active)' : ''}"
+													onclick={() => openSessionViewer(agent.name, session.key)}>
+													<span class="text-[10px] {isActive ? 'text-green-400' : 'text-gray-700'}">{isActive ? '●' : '○'}</span>
+													<span class="truncate">{shortSessionLabel(session.key)}</span>
+												</div>
+											{/each}
+										{/if}
+									{:else}
+										<!-- Individual session -->
+										<!-- svelte-ignore a11y_click_events_have_key_events -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
+										{@const session = group.sessions[0]}
+										{@const isActive = session.updatedAt > 0 && (Date.now() - session.updatedAt) < 30 * 60 * 1000}
+										<div class="flex items-center gap-1.5 px-2 py-0.5 rounded text-xs truncate cursor-pointer hover:bg-gray-800/50 transition-colors {viewingSession?.agentName === agent.name && viewingSession?.sessionKey === session.key ? 'bg-gray-800/60 text-gray-100 font-medium' : isActive ? 'text-gray-300' : 'text-gray-600'}"
+											title="{session.key}{isActive ? ' (active)' : ''}"
+											onclick={() => openSessionViewer(agent.name, session.key)}>
+											<span class="text-[10px] {isActive ? 'text-green-400' : 'text-gray-700'}">{isActive ? '●' : '○'}</span>
+											<span class="truncate">{group.label}</span>
+										</div>
+									{/if}
 								{/each}
 							{:else}
 								<div class="px-2 py-0.5 text-[10px] text-gray-700 italic">no sessions</div>
